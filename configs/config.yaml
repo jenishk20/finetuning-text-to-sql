@@ -1,0 +1,16 @@
+model:
+  provider: "xai"
+  name: "grok-4-1-fast-reasoning"
+  temperature: 0.0
+  max_tokens: 1024
+
+database:
+  type: "mysql"
+  schema_file: "data/gamedb_schema.sql"
+  questions_file: "data/gamedb_questions.json"
+
+evaluation:
+  compare_results: true # compare query output vs gold output
+  check_execution: true # check if generated SQL runs without errors
+  timeout_seconds: 30 # max time per query execution
+  output_dir: "results"
