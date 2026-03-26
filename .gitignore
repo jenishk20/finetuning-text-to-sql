@@ -18,3 +18,7 @@ wandb/
 dist/
 build/
 gamedb*
+package-lock.json
+backend/*
+frontend/*
+data/*
