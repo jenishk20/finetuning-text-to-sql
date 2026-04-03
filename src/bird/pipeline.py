@@ -1,22 +1,27 @@
 """
-Spider benchmark evaluation pipeline.
+BIRD benchmark evaluation pipeline.
 
-Runs any LLM against the Spider dev set (1,034 questions across 140+ databases)
+Runs any LLM against the BIRD dev set (1,534 questions across 11 databases)
 using SQLite for execution-based evaluation.
+
+BIRD differs from Spider in two key ways:
+  1. Each question has an "evidence" field (external knowledge / domain hints)
+     that must be injected into the prompt.
+  2. The gold SQL field is "SQL" (not "query").
 
 Usage:
     # List available models
-    python -m src.spider_pipeline --list-models
+    python -m src.bird.pipeline --list-models
 
     # Run with specific model via OpenRouter
-    python -m src.spider_pipeline --provider openrouter --model deepseek-v3
-    python -m src.spider_pipeline --provider openrouter --model gpt-4o --limit 10
+    python -m src.bird.pipeline --provider openrouter --model deepseek-v3
+    python -m src.bird.pipeline --provider openrouter --model gpt-4o --limit 10
 
     # Run with Grok (xAI)
-    python -m src.spider_pipeline --provider xai --model grok-4-1-fast-reasoning
+    python -m src.bird.pipeline --provider xai --model grok-4-1-fast-reasoning
 
     # Resume a previous run
-    python -m src.spider_pipeline --resume results/spider_deepseek-v3_XXXX.json
+    python -m src.bird.pipeline --resume results/bird_deepseek-v3_XXXX.json
 """
 
 import argparse
@@ -29,13 +34,15 @@ from pathlib import Path
 
 import yaml
 
-from src.llm_client import call_llm, list_available_models, resolve_model, PROVIDERS
-from src.sqlite_executor import execute_sqlite_query
-from src.schema_loader import get_schema_from_sqlite, get_db_path
-from src.evaluator import compare_results, compute_metrics
+from src.shared.llm_client import call_llm, list_available_models, resolve_model, PROVIDERS
+from src.shared.sqlite_executor import execute_sqlite_query
+from src.shared.schema_loader import get_schema_from_sqlite
+from src.shared.evaluator import compare_results, compute_metrics
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SPIDER_DATA_DIR = PROJECT_ROOT / "data" / "spider_data"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+BIRD_DATA_DIR = PROJECT_ROOT / "data" / "bird_data"
+BIRD_DEV_JSON = BIRD_DATA_DIR / "dev.json"
+BIRD_DB_DIR = BIRD_DATA_DIR / "dev_databases"
 
 
 def load_config() -> dict:
@@ -43,24 +50,38 @@ def load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def load_spider_dev() -> list[dict]:
-    with open(SPIDER_DATA_DIR / "dev.json") as f:
+def load_bird_dev() -> list[dict]:
+    with open(BIRD_DEV_JSON) as f:
         return json.load(f)
 
 
+def get_bird_db_path(db_id: str) -> str:
+    """Resolve the full path to a BIRD SQLite database file."""
+    db_path = BIRD_DB_DIR / db_id / f"{db_id}.sqlite"
+    if db_path.exists():
+        return str(db_path)
+
+    # Fallback: search for any .sqlite in the directory
+    db_dir = BIRD_DB_DIR / db_id
+    if db_dir.exists():
+        for f in db_dir.glob("*.sqlite"):
+            return str(f)
+
+    raise FileNotFoundError(f"No SQLite database found for db_id={db_id} in {BIRD_DB_DIR}")
+
+
 def make_model_label(model: str) -> str:
-    """Create a filesystem-safe label from a model name."""
     return model.replace("/", "_").replace(".", "-")
 
 
-def run_spider_pipeline(
+def run_bird_pipeline(
     provider: str,
     model: str,
     limit: int | None = None,
     resume_file: str | None = None,
 ):
     config = load_config()
-    dev_questions = load_spider_dev()
+    dev_questions = load_bird_dev()
     full_model = resolve_model(model, provider)
     model_label = make_model_label(model)
 
@@ -74,11 +95,11 @@ def run_spider_pipeline(
         with open(resume_file) as f:
             saved = json.load(f)
             existing_results = saved.get("results", [])
-            completed_ids = {r["spider_index"] for r in existing_results}
+            completed_ids = {r["question_id"] for r in existing_results}
         print(f"  Resuming from {resume_file} — {len(completed_ids)} already done")
 
     print(f"\n{'=' * 80}")
-    print(f"  SPIDER BENCHMARK EVALUATION")
+    print(f"  BIRD BENCHMARK EVALUATION")
     print(f"  Provider: {provider}")
     print(f"  Model:    {full_model}")
     print(f"  Questions: {len(dev_questions)} (dev set)")
@@ -92,27 +113,32 @@ def run_spider_pipeline(
     run_count = 0
     total_tokens = 0
 
-    for idx, q in enumerate(dev_questions):
-        if idx in completed_ids:
+    for q in dev_questions:
+        question_id = q["question_id"]
+        if question_id in completed_ids:
             continue
 
         run_count += 1
         db_id = q["db_id"]
         question = q["question"]
-        gold_sql = q["query"]
+        evidence = q.get("evidence", "").strip()
+        gold_sql = q["SQL"]
+        difficulty = q.get("difficulty", "unknown")
 
-        print(f"  [{run_count}/{total_to_run}] Q{idx} | db={db_id}")
+        print(f"  [{run_count}/{total_to_run}] Q{question_id} | db={db_id} | {difficulty}")
         print(f"    Question: {question[:100]}...")
+        if evidence:
+            print(f"    Evidence: {evidence[:80]}...")
 
         if db_id not in schema_cache:
             try:
-                db_path = get_db_path(str(SPIDER_DATA_DIR), db_id)
+                db_path = get_bird_db_path(db_id)
                 schema_cache[db_id] = get_schema_from_sqlite(db_path)
             except FileNotFoundError as e:
                 print(f"    SKIP — {e}")
                 continue
         schema = schema_cache[db_id]
-        db_path = get_db_path(str(SPIDER_DATA_DIR), db_id)
+        db_path = get_bird_db_path(db_id)
 
         try:
             llm_result = call_llm(
@@ -122,6 +148,7 @@ def run_spider_pipeline(
                 model=model,
                 temperature=config["model"].get("temperature", 0.0),
                 max_tokens=config["model"].get("max_tokens", 512),
+                evidence=evidence if evidence else None,
             )
             generated_sql = llm_result["generated_sql"]
             tokens = llm_result["usage"].get("total_tokens", 0)
@@ -130,9 +157,11 @@ def run_spider_pipeline(
         except Exception as e:
             print(f"    API ERROR: {e}")
             results.append({
-                "spider_index": idx,
+                "question_id": question_id,
                 "db_id": db_id,
                 "question": question,
+                "evidence": evidence,
+                "difficulty": difficulty,
                 "gold_sql": gold_sql,
                 "generated_sql": "",
                 "api_error": str(e),
@@ -158,9 +187,11 @@ def run_spider_pipeline(
         print(f"    Exec: {exec_ok} | {status} | {evaluation['details'][:80]}")
 
         results.append({
-            "spider_index": idx,
+            "question_id": question_id,
             "db_id": db_id,
             "question": question,
+            "evidence": evidence,
+            "difficulty": difficulty,
             "gold_sql": gold_sql,
             "generated_sql": generated_sql,
             "usage": llm_result["usage"],
@@ -188,8 +219,15 @@ def run_spider_pipeline(
     metrics = compute_metrics(results)
     output_file = _save_results(provider, full_model, model_label, results, total_tokens, len(dev_questions), metrics)
 
+    # Breakdown by difficulty
+    for diff in ["simple", "moderate", "challenging"]:
+        diff_results = [r for r in results if r.get("difficulty") == diff]
+        if diff_results:
+            correct = sum(1 for r in diff_results if r["eval"]["result_match"])
+            print(f"  {diff.capitalize():<12}: {correct}/{len(diff_results)} ({correct/len(diff_results):.1%})")
+
     print(f"\n{'=' * 80}")
-    print(f"  SPIDER BENCHMARK RESULTS — {full_model}")
+    print(f"  BIRD BENCHMARK RESULTS — {full_model}")
     print(f"{'=' * 80}")
     print(f"  Total questions:      {metrics.get('total_questions', 0)}")
     print(f"  Execution accuracy:   {metrics.get('execution_accuracy', 0):.1%}")
@@ -206,14 +244,14 @@ def _save_results(provider, full_model, model_label, results, total_tokens, tota
     output_dir = PROJECT_ROOT / "results"
     output_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = output_dir / f"spider_{model_label}_{timestamp}.json"
+    output_file = output_dir / f"bird_{model_label}_{timestamp}.json"
 
     save_data = {
         "metadata": {
             "provider": provider,
             "model": full_model,
             "timestamp": timestamp,
-            "benchmark": "spider_dev",
+            "benchmark": "bird_dev",
             "total_questions": total_questions,
             "completed": len(results),
             "total_tokens": total_tokens,
@@ -229,7 +267,7 @@ def _save_results(provider, full_model, model_label, results, total_tokens, tota
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Spider benchmark evaluation")
+    parser = argparse.ArgumentParser(description="Run BIRD benchmark evaluation")
     parser.add_argument("--provider", type=str, default="openrouter",
                         choices=list(PROVIDERS.keys()),
                         help="LLM provider (default: openrouter)")
@@ -249,7 +287,7 @@ if __name__ == "__main__":
 
     model = args.model or PROVIDERS[args.provider]["default_model"]
 
-    run_spider_pipeline(
+    run_bird_pipeline(
         provider=args.provider,
         model=model,
         limit=args.limit,

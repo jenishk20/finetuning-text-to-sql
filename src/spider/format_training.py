@@ -56,14 +56,12 @@ data/training/
 """
 
 import json
-import sys
 from pathlib import Path
 from collections import Counter, defaultdict
 
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from schema_loader import get_schema_from_sqlite, get_db_path
+from src.shared.schema_loader import get_schema_from_sqlite, get_db_path
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PATHS

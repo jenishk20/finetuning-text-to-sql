@@ -22,3 +22,6 @@ package-lock.json
 backend/*
 frontend/*
 data/*
+results/*
+CLAUDE.md
+BIRD_RESULTS.md

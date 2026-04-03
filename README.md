@@ -34,20 +34,20 @@ This pipeline is benchmark-agnostic. It currently supports **Spider V1** (comple
 
 ### Step 1 — Baseline Evaluation
 
-Run any LLM against Spider or BIRD via `spider_pipeline.py` / `bird_pipeline.py`.
+Run any LLM against Spider or BIRD via `src/spider/pipeline.py` / `src/bird/pipeline.py`.
 
 ```bash
 # Spider — run with Grok
-python -m src.spider_pipeline --provider xai --model grok-4-1-fast-reasoning
+python -m src.spider.pipeline --provider xai --model grok-4-1-fast-reasoning
 
 # Spider — run with DeepSeek via OpenRouter
-python -m src.spider_pipeline --provider openrouter --model deepseek-v3
+python -m src.spider.pipeline --provider openrouter --model deepseek-v3
 
 # Resume a previous run
-python -m src.spider_pipeline --resume results/spider_run_XXXX.json
+python -m src.spider.pipeline --resume results/spider_run_XXXX.json
 
 # BIRD works the same way
-python -m src.bird_pipeline --provider openrouter --model deepseek-v3
+python -m src.bird.pipeline --provider openrouter --model deepseek-v3
 ```
 
 Results: Grok-4 → **73.7%** (762/1034), DeepSeek V3 → **71.8%** (742/1034)
@@ -57,8 +57,8 @@ Results: Grok-4 → **73.7%** (762/1034), DeepSeek V3 → **71.8%** (742/1034)
 ### Step 2 — Build Preference Pairs
 
 ```bash
-python -m src.build_preference_pairs   # Spider
-python -m src.build_bird_pairs         # BIRD
+python -m src.spider.build_pairs   # Spider
+python -m src.bird.build_pairs     # BIRD
 ```
 
 Matches questions from both runs and sorts them into 4 buckets:
@@ -77,8 +77,8 @@ Output: 564 ready pairs + 478 queued for judging.
 ### Step 3 — LLM Judge
 
 ```bash
-python -m src.llm_judge       # Spider
-python -m src.bird_llm_judge  # BIRD
+python -m src.spider.llm_judge   # Spider
+python -m src.bird.llm_judge     # BIRD
 ```
 
 Judge model: **Gemini 2.5 Flash** via OpenRouter. Cost: ~$0.04 for 478 calls.
@@ -98,7 +98,7 @@ Final dataset: **1,040 DPO pairs** after filtering.
 ### Step 4 — Format Training Data
 
 ```bash
-python -m src.format_training_data
+python -m src.spider.format_training
 ```
 
 Outputs LLaMA-Factory alpaca format to `data/training/` (available on HuggingFace):
@@ -178,19 +178,21 @@ The `data/` directory (training JSONs, Spider databases) and `results/` (eval ou
 ```
 finetuning-text-to-sql/
 ├── src/
-│   ├── spider_pipeline.py        # Step 1: run any LLM on Spider dev set
-│   ├── bird_pipeline.py          # Step 1: same for BIRD benchmark
-│   ├── build_preference_pairs.py # Step 2: categorize Spider results into DPO pairs
-│   ├── build_bird_pairs.py       # Step 2: same for BIRD
-│   ├── llm_judge.py              # Step 3: Gemini judge for Spider ties
-│   ├── bird_llm_judge.py         # Step 3: same for BIRD
-│   ├── format_training_data.py   # Step 4: output LLaMA-Factory format
-│   ├── eval_finetuned.py         # Step 6: evaluate fine-tuned model
-│   ├── finetune.py               # Early SFT-only baseline (Gretel dataset)
-│   ├── llm_client.py             # xAI / OpenRouter client
-│   ├── schema_loader.py          # SQLite schema DDL loader
-│   ├── sqlite_executor.py        # SQL execution + result comparison
-│   └── evaluator.py              # Scoring logic
+│   ├── shared/                   # Infrastructure used by all experiments
+│   │   ├── llm_client.py         # xAI / OpenRouter client
+│   │   ├── schema_loader.py      # SQLite schema DDL loader
+│   │   ├── sqlite_executor.py    # SQL execution + result comparison
+│   │   └── evaluator.py          # Scoring logic
+│   ├── spider/                   # Spider V1 experiment (complete)
+│   │   ├── pipeline.py           # Step 1: run any LLM on Spider dev set
+│   │   ├── build_pairs.py        # Step 2: categorize results into DPO pairs
+│   │   ├── llm_judge.py          # Step 3: Gemini judge for ties
+│   │   ├── format_training.py    # Step 4: output LLaMA-Factory format
+│   │   └── eval_finetuned.py     # Step 6: evaluate fine-tuned model
+│   └── bird/                     # BIRD experiment (active)
+│       ├── pipeline.py           # Step 1: run any LLM on BIRD dev set
+│       ├── build_pairs.py        # Step 2: categorize results into DPO pairs
+│       └── llm_judge.py          # Step 3: Gemini judge for ties
 ├── configs/                      # LLaMA-Factory YAML configs
 ├── requirements.txt
 └── .env.example

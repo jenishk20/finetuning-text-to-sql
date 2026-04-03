@@ -14,18 +14,16 @@ FOUR CATEGORIES:
   4. skip              — both correct, identical SQL → no signal
 
 Usage:
-    python -m src.build_bird_pairs
+    python -m src.bird.build_pairs
 """
 
 import json
-import sys
 from pathlib import Path
 from collections import defaultdict
 
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from schema_loader import get_schema_from_sqlite
+from src.shared.schema_loader import get_schema_from_sqlite
 
 RESULTS_DIR = PROJECT_ROOT / "results"
 BIRD_DATA_DIR = PROJECT_ROOT / "data" / "bird_data"

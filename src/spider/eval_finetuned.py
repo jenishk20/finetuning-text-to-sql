@@ -22,11 +22,11 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from src.sqlite_executor import execute_sqlite_query
-from src.schema_loader import get_schema_from_sqlite, get_db_path
-from src.evaluator import compare_results, compute_metrics
+from src.shared.sqlite_executor import execute_sqlite_query
+from src.shared.schema_loader import get_schema_from_sqlite, get_db_path
+from src.shared.evaluator import compare_results, compute_metrics
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 SPIDER_DATA_DIR = PROJECT_ROOT / "data" / "spider_data"
 LORA_DIR = PROJECT_ROOT / "models" / "qwen-7b-sql-lora"
 BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"

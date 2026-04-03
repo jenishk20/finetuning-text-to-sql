@@ -50,11 +50,9 @@ import time
 import argparse
 from pathlib import Path
 
-# ── Project root on sys.path ──────────────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from llm_client import get_client, resolve_model
+from src.shared.llm_client import get_client, resolve_model
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG

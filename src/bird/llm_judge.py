@@ -7,10 +7,10 @@ Same logic as llm_judge.py (Spider), adapted for BIRD:
   - Evidence field included in judge prompt for context
 
 Usage:
-    python -m src.bird_llm_judge               # full run
-    python -m src.bird_llm_judge --dry-run     # test 1 call
-    python -m src.bird_llm_judge --limit 10    # test N calls
-    python -m src.bird_llm_judge --merge-only  # just merge completed into final
+    python -m src.bird.llm_judge               # full run
+    python -m src.bird.llm_judge --dry-run     # test 1 call
+    python -m src.bird.llm_judge --limit 10    # test N calls
+    python -m src.bird.llm_judge --merge-only  # just merge completed into final
 """
 
 import json
@@ -21,10 +21,9 @@ import time
 import argparse
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from llm_client import get_client
+from src.shared.llm_client import get_client
 
 RESULTS_DIR = PROJECT_ROOT / "results"
 
