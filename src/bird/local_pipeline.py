@@ -21,6 +21,7 @@ Override any path with CLI args if your layout differs.
 Requirements (already on the EC2 Deep Learning AMI):
     pip install transformers peft bitsandbytes accelerate
 """
+from __future__ import annotations
 
 import argparse
 import json

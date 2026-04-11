@@ -34,6 +34,7 @@ Usage:
 The output file is fed directly into LLaMA-Factory format_training (or a
 format_training script you write for BIRD delta pairs).
 """
+from __future__ import annotations
 
 import argparse
 import json

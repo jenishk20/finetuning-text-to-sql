@@ -5,6 +5,7 @@ Two levels of evaluation:
   1. Execution Accuracy (EX): Did the generated SQL run without errors?
   2. Result Accuracy (RES): Did it produce the same result set as the gold SQL?
 """
+from __future__ import annotations
 
 
 def normalize_rows(rows: list[tuple]) -> set[tuple]:
