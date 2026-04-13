@@ -3,6 +3,7 @@ SQL executor for running queries against Spider's SQLite databases.
 """
 
 import sqlite3
+import threading
 import time
 
 
@@ -25,6 +26,11 @@ def execute_sqlite_query(sql: str, db_path: str, timeout: int = 30) -> dict:
         conn.text_factory = str
         cursor = conn.cursor()
 
+        # Enforce hard timeout via conn.interrupt() — the timeout parameter
+        # in sqlite3.connect() only covers lock acquisition, not query execution.
+        timer = threading.Timer(timeout, conn.interrupt)
+        timer.start()
+
         start = time.time()
 
         statements = [s.strip() for s in sql.split(";") if s.strip()]
@@ -32,11 +38,14 @@ def execute_sqlite_query(sql: str, db_path: str, timeout: int = 30) -> dict:
         columns = []
         rows = []
 
-        for stmt in statements:
-            cursor.execute(stmt)
-            if cursor.description:
-                columns = [desc[0] for desc in cursor.description]
-                rows = cursor.fetchall()
+        try:
+            for stmt in statements:
+                cursor.execute(stmt)
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    rows = cursor.fetchall()
+        finally:
+            timer.cancel()
 
         elapsed_ms = round((time.time() - start) * 1000, 2)
 
