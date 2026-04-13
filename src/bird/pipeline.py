@@ -42,7 +42,9 @@ from src.shared.evaluator import compare_results, compute_metrics
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 BIRD_DATA_DIR = PROJECT_ROOT / "data" / "bird_data"
 BIRD_DEV_JSON = BIRD_DATA_DIR / "dev.json"
-BIRD_DB_DIR = BIRD_DATA_DIR / "dev_databases"
+BIRD_DEV_DB_DIR = BIRD_DATA_DIR / "dev_databases"
+BIRD_TRAIN_JSON = BIRD_DATA_DIR / "train.json"
+BIRD_TRAIN_DB_DIR = BIRD_DATA_DIR / "train_databases"
 
 
 def load_config() -> dict:
@@ -50,24 +52,25 @@ def load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def load_bird_dev() -> list[dict]:
-    with open(BIRD_DEV_JSON) as f:
+def load_bird_questions(train: bool = False) -> list[dict]:
+    path = BIRD_TRAIN_JSON if train else BIRD_DEV_JSON
+    with open(path) as f:
         return json.load(f)
 
 
-def get_bird_db_path(db_id: str) -> str:
+def get_bird_db_path(db_id: str, db_dir: Path = BIRD_DEV_DB_DIR) -> str:
     """Resolve the full path to a BIRD SQLite database file."""
-    db_path = BIRD_DB_DIR / db_id / f"{db_id}.sqlite"
+    db_path = db_dir / db_id / f"{db_id}.sqlite"
     if db_path.exists():
         return str(db_path)
 
     # Fallback: search for any .sqlite in the directory
-    db_dir = BIRD_DB_DIR / db_id
-    if db_dir.exists():
-        for f in db_dir.glob("*.sqlite"):
+    db_subdir = db_dir / db_id
+    if db_subdir.exists():
+        for f in db_subdir.glob("*.sqlite"):
             return str(f)
 
-    raise FileNotFoundError(f"No SQLite database found for db_id={db_id} in {BIRD_DB_DIR}")
+    raise FileNotFoundError(f"No SQLite database found for db_id={db_id} in {db_dir}")
 
 
 def make_model_label(model: str) -> str:
@@ -79,14 +82,17 @@ def run_bird_pipeline(
     model: str,
     limit: int | None = None,
     resume_file: str | None = None,
+    train: bool = False,
 ):
     config = load_config()
-    dev_questions = load_bird_dev()
+    questions = load_bird_questions(train=train)
+    db_dir = BIRD_TRAIN_DB_DIR if train else BIRD_DEV_DB_DIR
+    split_label = "train" if train else "dev"
     full_model = resolve_model(model, provider)
     model_label = make_model_label(model)
 
     if limit:
-        dev_questions = dev_questions[:limit]
+        questions = questions[:limit]
 
     # Resume support
     completed_ids = set()
@@ -102,18 +108,18 @@ def run_bird_pipeline(
     print(f"  BIRD BENCHMARK EVALUATION")
     print(f"  Provider: {provider}")
     print(f"  Model:    {full_model}")
-    print(f"  Questions: {len(dev_questions)} (dev set)")
+    print(f"  Split:    {split_label} ({len(questions)} questions)")
     print(f"  Already completed: {len(completed_ids)}")
     print(f"{'=' * 80}\n")
 
     schema_cache: dict[str, str] = {}
     results = list(existing_results)
 
-    total_to_run = len(dev_questions) - len(completed_ids)
+    total_to_run = len(questions) - len(completed_ids)
     run_count = 0
     total_tokens = 0
 
-    for q in dev_questions:
+    for q in questions:
         question_id = q["question_id"]
         if question_id in completed_ids:
             continue
@@ -132,13 +138,13 @@ def run_bird_pipeline(
 
         if db_id not in schema_cache:
             try:
-                db_path = get_bird_db_path(db_id)
+                db_path = get_bird_db_path(db_id, db_dir)
                 schema_cache[db_id] = get_schema_from_sqlite(db_path)
             except FileNotFoundError as e:
                 print(f"    SKIP — {e}")
                 continue
         schema = schema_cache[db_id]
-        db_path = get_bird_db_path(db_id)
+        db_path = get_bird_db_path(db_id, db_dir)
 
         try:
             llm_result = call_llm(
@@ -213,11 +219,11 @@ def run_bird_pipeline(
         })
 
         if run_count % 25 == 0:
-            _save_results(provider, full_model, model_label, results, total_tokens, len(dev_questions))
+            _save_results(provider, full_model, model_label, results, total_tokens, len(questions), split_label=split_label)
             print(f"    --- Checkpoint saved ({run_count} done) ---")
 
     metrics = compute_metrics(results)
-    output_file = _save_results(provider, full_model, model_label, results, total_tokens, len(dev_questions), metrics)
+    output_file = _save_results(provider, full_model, model_label, results, total_tokens, len(questions), metrics, split_label)
 
     # Breakdown by difficulty
     for diff in ["simple", "moderate", "challenging"]:
@@ -240,18 +246,18 @@ def run_bird_pipeline(
     return metrics
 
 
-def _save_results(provider, full_model, model_label, results, total_tokens, total_questions, metrics=None):
+def _save_results(provider, full_model, model_label, results, total_tokens, total_questions, metrics=None, split_label="dev"):
     output_dir = PROJECT_ROOT / "results"
     output_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = output_dir / f"bird_{model_label}_{timestamp}.json"
+    output_file = output_dir / f"bird_{split_label}_{model_label}_{timestamp}.json"
 
     save_data = {
         "metadata": {
             "provider": provider,
             "model": full_model,
             "timestamp": timestamp,
-            "benchmark": "bird_dev",
+            "benchmark": f"bird_{split_label}",
             "total_questions": total_questions,
             "completed": len(results),
             "total_tokens": total_tokens,
@@ -277,6 +283,8 @@ if __name__ == "__main__":
                         help="Only run first N questions")
     parser.add_argument("--resume", type=str, default=None,
                         help="Resume from a previous results file")
+    parser.add_argument("--train", action="store_true",
+                        help="Run on BIRD train set instead of dev set (for building DPO pairs)")
     parser.add_argument("--list-models", action="store_true",
                         help="List available model shortcuts and exit")
     args = parser.parse_args()
@@ -292,4 +300,5 @@ if __name__ == "__main__":
         model=model,
         limit=args.limit,
         resume_file=args.resume,
+        train=args.train,
     )

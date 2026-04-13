@@ -32,7 +32,6 @@ import time
 from pathlib import Path
 
 import torch
-from datasets import Dataset
 from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import GRPOConfig, GRPOTrainer
@@ -208,6 +207,7 @@ def train(
     max_new_tokens: int = 512,
     per_device_batch_size: int = 1,
     grad_accum_steps: int = 8,
+    resume_from_checkpoint: str | None = None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -258,7 +258,7 @@ def train(
     trainer = GRPOTrainer(
         model=model,
         tokenizer=tokenizer,
-        reward_funcs=sql_reward_fn,
+        reward_funcs=[sql_reward_fn],
         args=grpo_config,
         train_dataset=dataset,
     )
@@ -275,7 +275,7 @@ def train(
     print("=" * 70 + "\n")
 
     start = time.time()
-    trainer.train()
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     elapsed = round((time.time() - start) / 3600, 2)
     print(f"\nTraining complete in {elapsed}h")
 
@@ -308,6 +308,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-tokens",   type=int,   default=512)
     parser.add_argument("--batch-size",   type=int,   default=1)
     parser.add_argument("--grad-accum",   type=int,   default=8)
+    parser.add_argument("--resume",       type=str,   default=None,
+                        help="Path to checkpoint dir to resume from (e.g. output_dir/checkpoint-200)")
 
     args = parser.parse_args()
 
@@ -322,4 +324,5 @@ if __name__ == "__main__":
         max_new_tokens=args.max_tokens,
         per_device_batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum,
+        resume_from_checkpoint=args.resume,
     )

@@ -17,28 +17,28 @@ PROVIDERS = {
     "xai": {
         "base_url": "https://api.x.ai/v1",
         "api_key_env": "XAI_API_KEY",
-        "default_model": "grok-4-1-fast-reasoning",
+        "default_model": "grok-4.1-fast",
     },
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "api_key_env": "OPENROUTER_API_KEY",
-        "default_model": "deepseek/deepseek-chat-v3-0324",
+        "default_model": "deepseek/deepseek-v3.2",
     },
 }
 
 # Popular models on OpenRouter (for reference / listing)
 OPENROUTER_MODELS = {
-    "gpt-4o":       "openai/gpt-4o",
-    "gpt-4.1":      "openai/gpt-4.1",
-    "gpt-4.1-mini": "openai/gpt-4.1-mini",
+    "gpt-4o":        "openai/gpt-4o",
+    "gpt-4.1":       "openai/gpt-4.1",
+    "gpt-4.1-mini":  "openai/gpt-4.1-mini",
     "claude-sonnet": "anthropic/claude-sonnet-4",
-    "deepseek-v3":  "deepseek/deepseek-chat-v3-0324",
-    "deepseek-r1":  "deepseek/deepseek-r1",
-    "llama-70b":    "meta-llama/llama-3.1-70b-instruct",
-    "llama-8b":     "meta-llama/llama-3.1-8b-instruct",
-    "gemini-flash": "google/gemini-2.0-flash-001",
-    "gemini-pro":   "google/gemini-2.5-pro-preview-03-25",
-    "qwen-72b":     "qwen/qwen-2.5-coder-32b-instruct",
+    "deepseek-v3":   "deepseek/deepseek-v3.2",          # DeepSeek V3.2 — $0.26/$0.38 per M
+    "deepseek-r1":   "deepseek/deepseek-r1",
+    "llama-70b":     "meta-llama/llama-3.1-70b-instruct",
+    "llama-8b":      "meta-llama/llama-3.1-8b-instruct",
+    "gemini-flash":  "google/gemini-2.0-flash-001",
+    "gemini-pro":    "google/gemini-2.5-pro-preview-03-25",
+    "qwen-72b":      "qwen/qwen-2.5-coder-32b-instruct",
     "mistral-large": "mistralai/mistral-large",
 }
 
