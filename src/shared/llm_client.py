@@ -36,6 +36,8 @@ OPENROUTER_MODELS = {
     "claude-sonnet": "anthropic/claude-sonnet-4",
     "deepseek-v3":   "deepseek/deepseek-v3.2",          # DeepSeek V3.2 — $0.26/$0.38 per M
     "deepseek-r1":   "deepseek/deepseek-r1",
+    "grok-4.1-fast": "x-ai/grok-4.1-fast",              # Grok 4.1 Fast — $0.20/$0.50 per M
+    "grok-4.1":      "x-ai/grok-4.1",                   # Grok 4.1 full
     "llama-70b":     "meta-llama/llama-3.1-70b-instruct",
     "llama-8b":      "meta-llama/llama-3.1-8b-instruct",
     "gemini-flash":  "google/gemini-2.0-flash-001",
