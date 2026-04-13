@@ -24,6 +24,8 @@ Usage:
     python -m src.bird.pipeline --resume results/bird_deepseek-v3_XXXX.json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
