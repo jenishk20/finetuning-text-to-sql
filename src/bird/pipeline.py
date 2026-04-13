@@ -83,10 +83,25 @@ def run_bird_pipeline(
     limit: int | None = None,
     resume_file: str | None = None,
     train: bool = False,
+    train_json_override: str | None = None,
+    db_dir_override: str | None = None,
+    output_dir_override: str | None = None,
 ):
     config = load_config()
-    questions = load_bird_questions(train=train)
-    db_dir = BIRD_TRAIN_DB_DIR if train else BIRD_DEV_DB_DIR
+
+    # Path overrides (for HPC / non-standard layouts)
+    if train_json_override:
+        import json as _json
+        with open(train_json_override) as f:
+            questions = _json.load(f)
+    else:
+        questions = load_bird_questions(train=train)
+
+    if db_dir_override:
+        db_dir = Path(db_dir_override)
+    else:
+        db_dir = BIRD_TRAIN_DB_DIR if train else BIRD_DEV_DB_DIR
+
     split_label = "train" if train else "dev"
     full_model = resolve_model(model, provider)
     model_label = make_model_label(model)
@@ -219,11 +234,11 @@ def run_bird_pipeline(
         })
 
         if run_count % 25 == 0:
-            _save_results(provider, full_model, model_label, results, total_tokens, len(questions), split_label=split_label)
+            _save_results(provider, full_model, model_label, results, total_tokens, len(questions), split_label=split_label, output_dir_override=output_dir_override)
             print(f"    --- Checkpoint saved ({run_count} done) ---")
 
     metrics = compute_metrics(results)
-    output_file = _save_results(provider, full_model, model_label, results, total_tokens, len(questions), metrics, split_label)
+    output_file = _save_results(provider, full_model, model_label, results, total_tokens, len(questions), metrics, split_label, output_dir_override=output_dir_override)
 
     # Breakdown by difficulty
     for diff in ["simple", "moderate", "challenging"]:
@@ -246,9 +261,9 @@ def run_bird_pipeline(
     return metrics
 
 
-def _save_results(provider, full_model, model_label, results, total_tokens, total_questions, metrics=None, split_label="dev"):
-    output_dir = PROJECT_ROOT / "results"
-    output_dir.mkdir(exist_ok=True)
+def _save_results(provider, full_model, model_label, results, total_tokens, total_questions, metrics=None, split_label="dev", output_dir_override=None):
+    output_dir = Path(output_dir_override) if output_dir_override else PROJECT_ROOT / "results"
+    output_dir.mkdir(exist_ok=True, parents=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"bird_{split_label}_{model_label}_{timestamp}.json"
 
@@ -287,6 +302,12 @@ if __name__ == "__main__":
                         help="Run on BIRD train set instead of dev set (for building DPO pairs)")
     parser.add_argument("--list-models", action="store_true",
                         help="List available model shortcuts and exit")
+    parser.add_argument("--train-json", type=str, default=None,
+                        help="Override path to train.json (for HPC/non-standard layouts)")
+    parser.add_argument("--db-dir", type=str, default=None,
+                        help="Override path to databases directory (for HPC/non-standard layouts)")
+    parser.add_argument("--output-dir", type=str, default=None,
+                        help="Override output directory for results (default: project_root/results)")
     args = parser.parse_args()
 
     if args.list_models:
@@ -301,4 +322,7 @@ if __name__ == "__main__":
         limit=args.limit,
         resume_file=args.resume,
         train=args.train,
+        train_json_override=args.train_json,
+        db_dir_override=args.db_dir,
+        output_dir_override=args.output_dir,
     )
