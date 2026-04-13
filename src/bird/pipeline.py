@@ -108,6 +108,11 @@ def run_bird_pipeline(
     full_model = resolve_model(model, provider)
     model_label = make_model_label(model)
 
+    # BIRD train set has no question_id field — assign index as fallback
+    for i, q in enumerate(questions):
+        if "question_id" not in q:
+            q["question_id"] = i
+
     if limit:
         questions = questions[:limit]
 
