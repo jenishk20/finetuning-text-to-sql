@@ -5,6 +5,8 @@ All providers use the OpenAI-compatible API format, so we just
 swap the base_url and api_key.
 """
 
+from __future__ import annotations
+
 import os
 import re
 
