@@ -193,6 +193,10 @@ def train(
         gradient_checkpointing=True,
         dataloader_num_workers=0,
 
+        # Offline DPO — use pre-built pairs, no online generation
+        precompute_ref_log_probs=True,
+        generate_during_eval=False,
+
         # Logging + saving
         logging_steps=10,
         save_steps=save_steps,
