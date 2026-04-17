@@ -256,8 +256,8 @@ if __name__ == "__main__":
                         help="DPO beta — KL penalty, lower = stay closer to SFT (default: 0.05)")
     parser.add_argument("--lr",          type=float, default=5e-5,
                         help="Learning rate (default: 5e-5)")
-    parser.add_argument("--cutoff-len",  type=int,   default=4096,
-                        help="Max sequence length — use 4096 on H200, 1536 on A10G (default: 4096)")
+    parser.add_argument("--cutoff-len",  type=int,   default=8192,
+                        help="Max sequence length — use 8192 on H200, 4096 on A100, 1536 on A10G (default: 8192)")
     parser.add_argument("--batch-size",  type=int,   default=1)
     parser.add_argument("--grad-accum",  type=int,   default=8)
     parser.add_argument("--save-steps",  type=int,   default=50,
