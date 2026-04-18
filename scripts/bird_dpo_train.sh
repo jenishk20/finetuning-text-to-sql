@@ -9,7 +9,7 @@
 #SBATCH --output=/scratch/phalle.y/bird_dpo_%j.out
 #SBATCH --error=/scratch/phalle.y/bird_dpo_%j.err
 
-source /scratch/phalle.y/finetuning-text-to-sql/myenv/bin/activate
+source activate /scratch/phalle.y/py310env
 cd /scratch/phalle.y/finetuning-text-to-sql
 
 # Redirect all caches to scratch — home dir has small quota

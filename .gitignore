@@ -25,3 +25,4 @@ data/*
 results/*
 CLAUDE.md
 BIRD_RESULTS.md
+bird_sft*
