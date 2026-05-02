@@ -22,7 +22,7 @@ export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 python -m src.bird.dpo_train \
     --pairs-file /scratch/phalle.y/results_frontier_pairs/bird_frontier_dpo_data.json \
     --sft-adapter /home/phalle.y/Jenish-DPO-GRPO/bird_sft_adapter_1 \
-    --output-dir /scratch/phalle.y/bird_frontier_dpo_adapter \
+    --output-dir /scratch/phalle.y/bird_frontier_dpo_adapter_4684pairs \
     --cutoff-len 8192 \
     --beta 0.05 \
     --epochs 1 \
