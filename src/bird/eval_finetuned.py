@@ -40,7 +40,7 @@ from src.shared.sqlite_executor import execute_sqlite_query
 from src.shared.evaluator import compare_results, compute_metrics
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
+DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 SYSTEM_PROMPT = (
     "You are an expert SQL query generator. "
@@ -69,14 +69,14 @@ def build_instruction(question: str, schema: str, evidence: str = "") -> str:
 # MODEL
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_model(adapter: Path | None, base_only: bool = False):
-    """Load Qwen 7B in 4-bit NF4, optionally with DPO LoRA adapter."""
-    print(f"Loading tokenizer: {BASE_MODEL}")
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
+def load_model(adapter: Path | None, base_only: bool = False, base_model: str = DEFAULT_BASE_MODEL):
+    """Load base model in 4-bit NF4, optionally with DPO LoRA adapter."""
+    print(f"Loading tokenizer: {base_model}")
+    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print("Loading model in 4-bit NF4...")
+    print(f"Loading {base_model} in 4-bit NF4...")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -84,7 +84,7 @@ def load_model(adapter: Path | None, base_only: bool = False):
         bnb_4bit_use_double_quant=True,
     )
     model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
+        base_model,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
@@ -171,8 +171,10 @@ def run_evaluation(
     limit: int | None = None,
     base_only: bool = False,
     resume_file: Path | None = None,
+    base_model: str = DEFAULT_BASE_MODEL,
 ):
-    model_label = "qwen-7b-bird-base" if base_only else "qwen-7b-bird-dpo"
+    short_name  = base_model.split("/")[-1].lower().replace("qwen2.5-coder-", "qwen").replace("-instruct", "")
+    model_label = f"{short_name}-bird-base" if base_only else f"{short_name}-bird-dpo"
 
     # ── Resume support ────────────────────────────────────────────────────────
     completed_ids: set = set()
@@ -195,7 +197,7 @@ def run_evaluation(
     to_run = total - len(completed_ids)
 
     # ── Load model ────────────────────────────────────────────────────────────
-    model, tokenizer = load_model(adapter, base_only)
+    model, tokenizer = load_model(adapter, base_only, base_model=base_model)
 
     print(f"\n{'=' * 70}")
     print(f"  BIRD EVALUATION — {model_label}")
@@ -285,7 +287,7 @@ def run_evaluation(
             print(f"    --- Checkpoint ({idx + 1}/{total} done) ---")
 
     metrics = compute_metrics(results)
-    output_file = _save(model_label, results, total, output_dir, metrics)
+    output_file = _save(model_label, results, total, output_dir, metrics, base_model=base_model)
 
     print(f"\n{'=' * 70}")
     print(f"  RESULTS — {model_label}")
@@ -300,7 +302,7 @@ def run_evaluation(
     return metrics
 
 
-def _save(model_label, results, total, output_dir, metrics=None):
+def _save(model_label, results, total, output_dir, metrics=None, base_model=DEFAULT_BASE_MODEL):
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"bird_eval_{model_label}_{timestamp}.json"
@@ -308,7 +310,7 @@ def _save(model_label, results, total, output_dir, metrics=None):
         json.dump({
             "metadata": {
                 "model":           model_label,
-                "base_model":      BASE_MODEL,
+                "base_model":      base_model,
                 "timestamp":       timestamp,
                 "benchmark":       "bird_dev",
                 "total_questions": total,
@@ -344,6 +346,8 @@ if __name__ == "__main__":
                         help="Evaluate base model without adapter (baseline comparison)")
     parser.add_argument("--resume",     type=Path, default=None,
                         help="Path to partial results JSON to resume an interrupted run")
+    parser.add_argument("--base-model", type=str, default=DEFAULT_BASE_MODEL,
+                        help=f"HF base model ID (default: {DEFAULT_BASE_MODEL}). Use Qwen/Qwen2.5-Coder-14B-Instruct for 14B.")
 
     args = parser.parse_args()
 
@@ -355,4 +359,5 @@ if __name__ == "__main__":
         limit=args.limit,
         base_only=args.base_only,
         resume_file=args.resume,
+        base_model=args.base_model,
     )
