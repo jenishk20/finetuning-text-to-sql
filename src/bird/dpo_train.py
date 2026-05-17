@@ -38,7 +38,7 @@ from trl import DPOConfig, DPOTrainer
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
+DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,11 +161,12 @@ def train(
     grad_accum_steps: int = 8,
     save_steps: int = 50,
     resume_from_checkpoint: str | None = None,
+    base_model: str = DEFAULT_BASE_MODEL,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Load model + tokenizer ────────────────────────────────────────────────
-    model, tokenizer = load_model_for_dpo(BASE_MODEL, sft_adapter)
+    model, tokenizer = load_model_for_dpo(base_model, sft_adapter)
 
     # ── Build dataset ─────────────────────────────────────────────────────────
     print("\nBuilding DPO dataset...")
@@ -217,7 +218,7 @@ def train(
 
     print("\n" + "=" * 70)
     print("  DPO TRAINING — BIRD Text-to-SQL (Frontier Pairs)")
-    print(f"  Base model:    {BASE_MODEL}")
+    print(f"  Base model:    {base_model}")
     print(f"  SFT adapter:   {sft_adapter or 'none (not recommended)'}")
     print(f"  Pairs file:    {pairs_file.name}")
     print(f"  Dataset size:  {len(dataset)}")
@@ -268,6 +269,8 @@ if __name__ == "__main__":
                         help="Save checkpoint every N steps (default: 50 for 2h session limit)")
     parser.add_argument("--resume",      type=str,   default=None,
                         help="Path to checkpoint dir to resume from")
+    parser.add_argument("--base-model",  type=str,   default=DEFAULT_BASE_MODEL,
+                        help=f"HF base model ID (default: {DEFAULT_BASE_MODEL})")
 
     args = parser.parse_args()
 
@@ -283,4 +286,5 @@ if __name__ == "__main__":
         grad_accum_steps=args.grad_accum,
         save_steps=args.save_steps,
         resume_from_checkpoint=args.resume,
+        base_model=args.base_model,
     )
