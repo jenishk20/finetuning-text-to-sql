@@ -61,21 +61,42 @@ def pick_best_candidate(
     db_path: str,
 ) -> tuple[str, dict, int]:
     """
-    Try each candidate in order; return the first that executes successfully
-    and returns at least one row. If none succeed, return the first candidate.
+    Self-consistency selection: execute all K candidates, group by result set,
+    and return the SQL whose result is shared by the most other candidates
+    (majority vote). Ties broken by lowest rank.
 
-    Returns:
-        (chosen_sql, execution_result, index_of_picked_candidate)
+    This is the standard "execution-based self-consistency" used in SQL-PaLM,
+    MAC-SQL, CodeS — far stronger than 'first that runs'.
     """
-    for idx, sql in enumerate(candidates):
-        exec_result = execute_sqlite_query(sql, db_path)
-        if exec_result["success"] and exec_result["row_count"] > 0:
-            return sql, exec_result, idx
+    from collections import Counter, defaultdict
 
-    # All failed or returned empty — fall back to first candidate's result
-    first_sql    = candidates[0]
-    first_result = execute_sqlite_query(first_sql, db_path)
-    return first_sql, first_result, 0
+    # 1. Execute all candidates
+    exec_results = [execute_sqlite_query(sql, db_path) for sql in candidates]
+
+    # 2. Hash result rows for grouping (only for successful executions)
+    def result_key(res: dict) -> str | None:
+        if not res["success"] or res.get("row_count", 0) == 0:
+            return None
+        rows = res.get("rows", [])
+        try:
+            return json.dumps(rows, sort_keys=True, default=str)
+        except Exception:
+            return str(rows)
+
+    keys = [result_key(r) for r in exec_results]
+
+    # 3. Vote — count occurrences of each non-null result key
+    votes = Counter(k for k in keys if k is not None)
+
+    if votes:
+        winning_key, _ = votes.most_common(1)[0]
+        # Pick the lowest-index candidate that produced the winning result
+        for idx, k in enumerate(keys):
+            if k == winning_key:
+                return candidates[idx], exec_results[idx], idx
+
+    # 4. All failed — fall back to first candidate
+    return candidates[0], exec_results[0], 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
