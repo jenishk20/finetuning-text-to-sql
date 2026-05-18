@@ -16,17 +16,7 @@ from pathlib import Path
 
 from datasets import load_dataset
 
-
-def build_instruction(question: str, schema: str, evidence: str = "") -> str:
-    """Must match eval_finetuned.py:build_instruction exactly."""
-    evidence_block = f"External Knowledge:\n{evidence}\n\n" if evidence.strip() else ""
-    return (
-        "Convert the following natural language question into a valid SQL query.\n\n"
-        f"Database Schema:\n{schema}\n\n"
-        f"{evidence_block}"
-        f"Question: {question}\n\n"
-        "Return only the SQL query with no explanation."
-    )
+from src.bird.inference import build_instruction
 
 
 def main():

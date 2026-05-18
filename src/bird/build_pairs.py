@@ -35,6 +35,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.shared.schema_loader import get_schema_from_sqlite
+from src.bird.inference import build_instruction
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,19 +68,7 @@ def sqls_are_equivalent(sql_a: str, sql_b: str) -> bool:
     return normalize(sql_a) == normalize(sql_b)
 
 
-def build_instruction(question: str, schema: str, evidence: str = "") -> str:
-    """
-    Build the instruction string for DPO training.
-    Must exactly match the format used during SFT training.
-    """
-    evidence_block = f"External Knowledge:\n{evidence}\n\n" if evidence.strip() else ""
-    return (
-        "Convert the following natural language question into a valid SQL query.\n\n"
-        f"Database Schema:\n{schema}\n\n"
-        f"{evidence_block}"
-        f"Question: {question}\n\n"
-        "Return only the SQL query with no explanation."
-    )
+# build_instruction is imported from src.bird.inference (single source of truth)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

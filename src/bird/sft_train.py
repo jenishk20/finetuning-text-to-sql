@@ -27,13 +27,7 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-
-def _flash_attn_available() -> bool:
-    try:
-        import flash_attn  # noqa: F401
-        return True
-    except ImportError:
-        return False
+from src.bird.inference import _flash_attn_available
 
 
 def build_dataset(sft_file: Path, tokenizer) -> Dataset:

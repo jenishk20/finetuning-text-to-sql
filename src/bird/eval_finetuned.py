@@ -38,31 +38,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from src.shared.sqlite_executor import execute_sqlite_query
 from src.shared.evaluator import compare_results, compute_metrics
+from src.bird.inference import build_instruction, SYSTEM_PROMPT
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
-
-SYSTEM_PROMPT = (
-    "You are an expert SQL query generator. "
-    "Given a database schema and a natural language question, "
-    "generate a single valid SQL query that answers the question. "
-    "Output ONLY the SQL query, nothing else."
-)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PROMPT — must match exactly what was used during DPO training
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_instruction(question: str, schema: str, evidence: str = "") -> str:
-    evidence_block = f"External Knowledge:\n{evidence}\n\n" if evidence.strip() else ""
-    return (
-        "Convert the following natural language question into a valid SQL query.\n\n"
-        f"Database Schema:\n{schema}\n\n"
-        f"{evidence_block}"
-        f"Question: {question}\n\n"
-        "Return only the SQL query with no explanation."
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

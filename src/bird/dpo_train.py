@@ -34,6 +34,8 @@ from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_t
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import DPOConfig, DPOTrainer
 
+from src.bird.inference import _flash_attn_available
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -88,14 +90,6 @@ def build_dpo_dataset(pairs_file: Path, tokenizer) -> Dataset:
 # ─────────────────────────────────────────────────────────────────────────────
 # MODEL LOADING
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _flash_attn_available() -> bool:
-    try:
-        import flash_attn
-        return True
-    except ImportError:
-        return False
-
 
 def load_model_for_dpo(base_model: str, sft_adapter: Path | None):
     """
