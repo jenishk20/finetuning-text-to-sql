@@ -32,8 +32,8 @@ PYTHONUNBUFFERED=1 python -m src.bird.build_self_sampling_pairs \
     --base-model    Qwen/Qwen2.5-Coder-14B-Instruct \
     --adapter       /scratch/phalle.y/bird_sft_adapter_14b/checkpoint-3100 \
     --output-file   /scratch/phalle.y/results_self_sampling/bird_self_sampling_pairs.json \
-    --db-dir        /scratch/phalle.y/bird_train/train/train_databases/train_databases \
+    --db-dir        /scratch/phalle.y/bird_train/train/train_databases \
     --k             4 \
     --temperature   0.8 \
-    --max-questions 3000 \
+    --max-questions 1500 \
     --use-hf

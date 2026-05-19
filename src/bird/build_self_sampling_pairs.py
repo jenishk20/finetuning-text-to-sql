@@ -142,12 +142,18 @@ def build_pairs(
     skipped      = {"no_correct": 0, "all_correct": 0, "all_wrong": 0}
     per_question_stats = []
 
-    for q, cands in zip(questions, all_candidates):
-        gold_exec = execute_sqlite_query(q["gold_sql"], q["db_path"])
+    from src.shared.evaluator import compare_results
+    # 15s timeout balances: catches bad SQL with cross-joins (would hang 30s+),
+    # while giving 3x headroom over typical correct query time (<5s on BIRD).
+    # BIRD official eval uses 30s but that's for gold SQL only.
+    EXEC_TIMEOUT = 15
+    exec_start   = time.time()
+
+    for i, (q, cands) in enumerate(zip(questions, all_candidates)):
+        gold_exec = execute_sqlite_query(q["gold_sql"], q["db_path"], timeout=EXEC_TIMEOUT)
         correct, wrong = [], []
         for sql in cands:
-            cand_exec = execute_sqlite_query(sql, q["db_path"])
-            from src.shared.evaluator import compare_results
+            cand_exec = execute_sqlite_query(sql, q["db_path"], timeout=EXEC_TIMEOUT)
             ev = compare_results(cand_exec, gold_exec)
             if ev["result_match"]:
                 correct.append(sql)
@@ -162,25 +168,38 @@ def build_pairs(
 
         if not correct:
             skipped["all_wrong"] += 1
-            continue
-        if not wrong:
+        elif not wrong:
             skipped["all_correct"] += 1
-            continue
+        else:
+            instruction = build_instruction(q["question"], q["schema"], q["evidence"])
+            pairs.append({
+                "instruction":     instruction,
+                "input":           "",
+                "chosen":          correct[0],
+                "rejected":        wrong[0],
+                "question_id":     q["question_id"],
+                "db_id":           q["db_id"],
+                "gold_sql":        q["gold_sql"],
+                "difficulty":      q["difficulty"],
+                "num_correct":     len(correct),
+                "num_wrong":       len(wrong),
+            })
 
-        instruction = build_instruction(q["question"], q["schema"], q["evidence"])
-        # Form one pair per question: best correct vs worst wrong
-        pairs.append({
-            "instruction":     instruction,
-            "input":           "",
-            "chosen":          correct[0],
-            "rejected":        wrong[0],
-            "question_id":     q["question_id"],
-            "db_id":           q["db_id"],
-            "gold_sql":        q["gold_sql"],
-            "difficulty":      q["difficulty"],
-            "num_correct":     len(correct),
-            "num_wrong":       len(wrong),
-        })
+        # Progress + intermediate save every 100 questions
+        if (i + 1) % 100 == 0:
+            elapsed_min = (time.time() - exec_start) / 60
+            rate        = (i + 1) / max(elapsed_min, 0.01)
+            eta_min     = (len(questions) - (i + 1)) / max(rate, 0.1)
+            print(f"  [{i+1}/{len(questions)}] pairs={len(pairs)} "
+                  f"skip_wrong={skipped['all_wrong']} skip_correct={skipped['all_correct']} "
+                  f"| elapsed={elapsed_min:.1f}min ETA={eta_min:.1f}min")
+            # Intermediate save so a SLURM timeout doesn't destroy all pairs
+            with open(output_file, "w") as f:
+                json.dump(
+                    [{"instruction": p["instruction"], "input": "", "chosen": p["chosen"], "rejected": p["rejected"]}
+                     for p in pairs],
+                    f, indent=2,
+                )
 
     # ── Save ──────────────────────────────────────────────────────────────────
     # Keep only the DPO-relevant keys in the trainer-compatible file
