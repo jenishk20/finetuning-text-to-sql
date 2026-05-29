@@ -19,8 +19,9 @@ export TORCH_HOME=/scratch/phalle.y/torch_cache
 export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
+# Stage 3a: evaluate the 7B DPO adapter (output of bird_dpo_7b.sh) on BIRD dev
 PYTHONUNBUFFERED=1 python -m src.bird.eval_finetuned \
-    --adapter    /scratch/phalle.y/bird_frontier_dpo_adapter/final_adapter \
+    --adapter    /scratch/phalle.y/bird_dpo_adapter_7b/final_adapter \
     --dev-json   /home/phalle.y/Jenish-DPO-GRPO/bird_data/dev.json \
     --db-dir     /home/phalle.y/Jenish-DPO-GRPO/bird_data/dev_databases \
-    --output-dir /scratch/phalle.y/results_finetuned_bird_dpo
+    --output-dir /scratch/phalle.y/results_bird_dpo_7b

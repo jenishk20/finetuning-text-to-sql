@@ -18,8 +18,8 @@ export TORCH_HOME=/scratch/phalle.y/torch_cache
 export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
-# Cross-eval: BIRD DPO adapter (50.3% on BIRD) evaluated on Spider dev set
+# Stage 3b: cross-eval the 7B BIRD DPO adapter on the Spider dev set
 PYTHONUNBUFFERED=1 python -m src.spider.eval_finetuned \
-    --adapter    /scratch/phalle.y/bird_frontier_dpo_adapter/final_adapter \
+    --adapter    /scratch/phalle.y/bird_dpo_adapter_7b/final_adapter \
     --data-dir   /home/phalle.y/Jenish-DPO-GRPO/spider_data \
-    --output-dir /scratch/phalle.y/results_spider_crosseval
+    --output-dir /scratch/phalle.y/results_spider_crosseval_7b

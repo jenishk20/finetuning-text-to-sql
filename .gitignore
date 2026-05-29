@@ -12,6 +12,13 @@ data/spider_data/*.sql
 models/
 checkpoints/
 wandb/
+
+# Trained LoRA adapters / model weights — never commit (multi-GB binaries)
+*_adapter*/
+checkpoint-*/
+*.safetensors
+*.pt
+*.bin
 *.sqlite
 .DS_Store
 *.egg-info/
