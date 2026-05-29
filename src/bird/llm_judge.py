@@ -1,17 +1,19 @@
 """
 Step 2 (BIRD): LLM Judge — resolve "both correct, different SQL" pairs.
 
-Same logic as llm_judge.py (Spider), adapted for BIRD:
-  - Uses bird_judge_queue.json / bird_preference_pairs.json
-  - Uses question_id (not spider_index)
-  - Evidence field included in judge prompt for context
+Reads the judge queue produced by build_pairs.py and uses Gemini Flash
+to pick the better SQL when both models were correct but wrote different queries.
+Position bias is controlled by random A/B swap (seed 42).
 
 Usage:
-    python -m src.bird.llm_judge               # full run
-    python -m src.bird.llm_judge --dry-run     # test 1 call
-    python -m src.bird.llm_judge --limit 10    # test N calls
-    python -m src.bird.llm_judge --merge-only  # just merge completed into final
+    python -m src.bird.llm_judge \\
+        --pairs-dir /scratch/phalle.y/results_frontier_pairs
+
+    python -m src.bird.llm_judge --pairs-dir ... --dry-run     # test 1 call
+    python -m src.bird.llm_judge --pairs-dir ... --limit 10    # test N calls
+    python -m src.bird.llm_judge --pairs-dir ... --merge-only  # just merge
 """
+from __future__ import annotations
 
 import json
 import random
@@ -21,22 +23,15 @@ import time
 import argparse
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.shared.llm_client import get_client
 
-RESULTS_DIR = PROJECT_ROOT / "results"
-
-JUDGE_QUEUE_FILE   = RESULTS_DIR / "bird_judge_queue.json"
-JUDGED_OUTPUT_FILE = RESULTS_DIR / "bird_judge_queue_completed.json"
-PAIRS_FILE         = RESULTS_DIR / "bird_preference_pairs.json"
-FINAL_PAIRS_FILE   = RESULTS_DIR / "bird_preference_pairs_final.json"
-
-JUDGE_MODEL      = "google/gemini-2.5-flash"
-JUDGE_PROVIDER   = "openrouter"
-TEMPERATURE      = 0.0
-MAX_TOKENS       = 200
-CHECKPOINT_EVERY = 25
+JUDGE_MODEL         = "google/gemini-2.5-flash"
+JUDGE_PROVIDER      = "openrouter"
+TEMPERATURE         = 0.0
+MAX_TOKENS          = 200
+CHECKPOINT_EVERY    = 25
 SLEEP_BETWEEN_CALLS = 0.2
 
 SYSTEM_PROMPT = """You are an expert SQL code reviewer with deep knowledge of SQL best practices.
@@ -160,11 +155,15 @@ def judge_pair(client, entry: dict, rng: random.Random) -> dict:
     return result
 
 
-def merge_into_final(dry_run: bool = False):
-    with open(PAIRS_FILE) as f:
+def merge_into_final(pairs_dir: Path, dry_run: bool = False):
+    pairs_file         = pairs_dir / "bird_preference_pairs.json"
+    judged_output_file = pairs_dir / "bird_judge_queue_completed.json"
+    final_pairs_file   = pairs_dir / "bird_preference_pairs_final.json"
+
+    with open(pairs_file) as f:
         existing_pairs = json.load(f)
 
-    with open(JUDGED_OUTPUT_FILE) as f:
+    with open(judged_output_file) as f:
         judged = json.load(f)
 
     judge_pairs = []
@@ -214,36 +213,43 @@ def merge_into_final(dry_run: bool = False):
         print(f"    DeepSeek preferred: {ds_wins} ({ds_wins/len(judge_pairs)*100:.1f}%)")
 
     if not dry_run:
-        with open(FINAL_PAIRS_FILE, "w") as f:
+        with open(final_pairs_file, "w") as f:
             json.dump(final_pairs, f, indent=2)
-        print(f"\n  Saved: {FINAL_PAIRS_FILE}")
+        print(f"\n  Saved: {final_pairs_file}")
     else:
-        print(f"\n  [dry-run] Would save to: {FINAL_PAIRS_FILE}")
+        print(f"\n  [dry-run] Would save to: {final_pairs_file}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Step 2 (BIRD): LLM judge for SQL preference pairs")
+    parser.add_argument("--pairs-dir",  type=Path, required=True,
+                        help="Directory containing bird_judge_queue.json (output of build_pairs.py)")
     parser.add_argument("--dry-run",    action="store_true", help="Test one call then exit")
     parser.add_argument("--limit",      type=int, default=None, help="Only judge N pairs")
     parser.add_argument("--merge-only", action="store_true", help="Skip judging, just merge")
     args = parser.parse_args()
 
+    pairs_dir          = args.pairs_dir
+    judge_queue_file   = pairs_dir / "bird_judge_queue.json"
+    judged_output_file = pairs_dir / "bird_judge_queue_completed.json"
+
     print("=" * 60)
     print("Step 2 (BIRD): LLM Judge")
     print(f"Model: {JUDGE_MODEL}  |  Provider: {JUDGE_PROVIDER}")
+    print(f"Pairs dir: {pairs_dir}")
     print("=" * 60)
 
     if args.merge_only:
-        merge_into_final(dry_run=args.dry_run)
+        merge_into_final(pairs_dir=pairs_dir, dry_run=args.dry_run)
         return
 
-    with open(JUDGE_QUEUE_FILE) as f:
+    with open(judge_queue_file) as f:
         queue = json.load(f)
 
     # Resume support
     completed: dict[int, dict] = {}
-    if JUDGED_OUTPUT_FILE.exists():
-        with open(JUDGED_OUTPUT_FILE) as f:
+    if judged_output_file.exists():
+        with open(judged_output_file) as f:
             for entry in json.load(f):
                 if entry.get("judge_winner") is not None:
                     completed[entry["question_id"]] = entry
@@ -294,7 +300,7 @@ def main():
         print(f"{entry['question_id']:>6}  {entry['db_id']:<30}  {winner_display:<12}  {tokens:>8}  {reason_preview}")
 
         if (i + 1) % CHECKPOINT_EVERY == 0:
-            with open(JUDGED_OUTPUT_FILE, "w") as f:
+            with open(judged_output_file, "w") as f:
                 json.dump(all_results, f, indent=2)
             print(f"  [checkpoint — {i+1}/{len(todo)} done, {total_tokens:,} tokens so far]")
 
@@ -306,7 +312,7 @@ def main():
 
         time.sleep(SLEEP_BETWEEN_CALLS)
 
-    with open(JUDGED_OUTPUT_FILE, "w") as f:
+    with open(judged_output_file, "w") as f:
         json.dump(all_results, f, indent=2)
 
     judged_this_run = len(todo) - errors
@@ -333,11 +339,11 @@ def main():
 
     if total_judged == len(queue):
         print(f"\n  All {len(queue)} pairs judged ✓ — merging into final preference pairs...")
-        merge_into_final()
+        merge_into_final(pairs_dir=pairs_dir)
     else:
         remaining = len(queue) - total_judged
         print(f"\n  {remaining} pairs still pending. Re-run to continue.")
-        print(f"  When complete, run: python -m src.bird_llm_judge --merge-only")
+        print(f"  When complete, run: python -m src.bird.llm_judge --pairs-dir {pairs_dir} --merge-only")
 
 
 if __name__ == "__main__":

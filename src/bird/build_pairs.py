@@ -1,112 +1,131 @@
 """
-Step 1 (BIRD): Build preference pairs from Grok and DeepSeek BIRD evaluation results.
+Build DPO preference pairs from two frontier model BIRD evaluation runs.
 
-Same 4-category logic as build_preference_pairs.py (Spider), adapted for BIRD:
-  - Uses question_id (not spider_index)
-  - DB path is data/bird_data/dev_databases/<db_id>/<db_id>.sqlite
-  - Instruction includes the evidence field (external knowledge)
-  - Output files prefixed with bird_
+Compares Grok and DeepSeek results question-by-question and produces
+preference pairs for DPO training. Designed for the BIRD train set
+(9,428 questions) but works for dev set too.
 
 FOUR CATEGORIES:
-  1. clear_preference  — one model right, one wrong → direct pair
+  1. clear_preference  — one model right, one wrong → direct pair (strongest signal)
   2. judge_needed      — both correct, different SQL → needs LLM judge (Step 2)
-  3. gold_vs_wrong     — both wrong → gold SQL as chosen, 2 pairs per question
-  4. skip              — both correct, identical SQL → no signal
+  3. gold_vs_wrong     — both wrong → gold SQL chosen (skipped by default, use --include-gold-fallback)
+  4. skip              — both correct, identical SQL OR both wrong (default)
 
 Usage:
-    python -m src.bird.build_pairs
+    # On HPC — train set runs
+    python -m src.bird.build_pairs \\
+        --grok   /scratch/phalle.y/results_frontier_bird_dpo_grok/bird_train_grok-4-1-fast_XXXX.json \\
+        --deepseek /scratch/phalle.y/results_frontier_bird_dpo_deepseek/bird_train_deepseek-v3_XXXX.json \\
+        --db-dir /scratch/phalle.y/bird_train/train/train_databases/train_databases \\
+        --output-dir /scratch/phalle.y/results_frontier_pairs
+
+    # Include gold fallback pairs (both-wrong questions)
+        --include-gold-fallback
+
+    # Dry run — print stats without saving
+        --dry-run
 """
+from __future__ import annotations
 
+import argparse
 import json
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 from src.shared.schema_loader import get_schema_from_sqlite
-
-RESULTS_DIR = PROJECT_ROOT / "results"
-BIRD_DATA_DIR = PROJECT_ROOT / "data" / "bird_data"
-BIRD_DB_DIR = BIRD_DATA_DIR / "dev_databases"
-
-GROK_FILE     = RESULTS_DIR / "bird_grok-4-1-fast-reasoning_20260324_155728.json"
-DEEPSEEK_FILE = RESULTS_DIR / "bird_deepseek-v3_20260323_230921.json"
-
-OUTPUT_PAIRS_FILE = RESULTS_DIR / "bird_preference_pairs.json"
-OUTPUT_JUDGE_FILE = RESULTS_DIR / "bird_judge_queue.json"
-OUTPUT_STATS_FILE = RESULTS_DIR / "bird_preference_pairs_stats.json"
+from src.bird.inference import build_instruction
 
 
-def get_bird_db_path(db_id: str) -> str:
-    db_path = BIRD_DB_DIR / db_id / f"{db_id}.sqlite"
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def resolve_db_path(db_id: str, db_dir: Path) -> str:
+    """Find the SQLite file for a given db_id inside db_dir."""
+    db_path = db_dir / db_id / f"{db_id}.sqlite"
     if db_path.exists():
         return str(db_path)
-    db_dir = BIRD_DB_DIR / db_id
-    if db_dir.exists():
-        for f in db_dir.glob("*.sqlite"):
+    db_subdir = db_dir / db_id
+    if db_subdir.exists():
+        for f in db_subdir.glob("*.sqlite"):
             return str(f)
-    raise FileNotFoundError(f"No SQLite database found for db_id={db_id} in {BIRD_DB_DIR}")
+    raise FileNotFoundError(f"No SQLite database found for db_id={db_id} in {db_dir}")
 
 
 def load_results(path: Path) -> dict[int, dict]:
+    """Load a pipeline result file and index by question_id."""
     with open(path) as f:
         data = json.load(f)
     return {entry["question_id"]: entry for entry in data["results"]}
 
 
 def sqls_are_equivalent(sql_a: str, sql_b: str) -> bool:
+    """Normalize and compare two SQL strings."""
     def normalize(s: str) -> str:
         return " ".join(s.strip().lower().rstrip(";").split())
     return normalize(sql_a) == normalize(sql_b)
 
 
-def build_instruction(question: str, schema: str, evidence: str = "") -> str:
-    """Build the instruction string for BIRD — includes evidence field."""
-    evidence_block = f"External Knowledge:\n{evidence}\n\n" if evidence.strip() else ""
-    return (
-        "Convert the following natural language question into a valid SQL query.\n\n"
-        f"Database Schema:\n{schema}\n\n"
-        f"{evidence_block}"
-        f"Question: {question}\n\n"
-        "Return only the SQL query with no explanation."
-    )
+# build_instruction is imported from src.bird.inference (single source of truth)
 
 
-def main():
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_pairs(
+    grok_file: Path,
+    deepseek_file: Path,
+    db_dir: Path,
+    output_dir: Path,
+    include_gold_fallback: bool = False,
+    dry_run: bool = False,
+):
     print("=" * 60)
-    print("Step 1 (BIRD): Building Preference Pairs")
+    print("BIRD Frontier DPO — Building Preference Pairs")
     print("=" * 60)
 
     # ── 1. Load both result files ─────────────────────────────────────────────
     print(f"\n[1/4] Loading result files...")
-    grok     = load_results(GROK_FILE)
-    deepseek = load_results(DEEPSEEK_FILE)
+    grok     = load_results(grok_file)
+    deepseek = load_results(deepseek_file)
     print(f"      Grok entries:     {len(grok)}")
     print(f"      DeepSeek entries: {len(deepseek)}")
 
     shared_ids = set(grok.keys()) & set(deepseek.keys())
     if len(shared_ids) != len(grok) or len(shared_ids) != len(deepseek):
-        print(f"      WARNING: files don't cover identical question_ids. Using {len(shared_ids)} shared.")
+        print(f"      WARNING: files don't cover identical question_ids.")
+        print(f"               Grok-only: {len(set(grok.keys()) - shared_ids)}")
+        print(f"               DeepSeek-only: {len(set(deepseek.keys()) - shared_ids)}")
     question_ids = sorted(shared_ids)
     print(f"      Matched on {len(question_ids)} shared questions ✓")
 
     # ── 2. Load schemas ───────────────────────────────────────────────────────
-    print(f"\n[2/4] Loading schemas from SQLite databases...")
+    print(f"\n[2/4] Loading schemas from SQLite databases in {db_dir}...")
     schema_cache: dict[str, str] = {}
     all_db_ids = {grok[i]["db_id"] for i in question_ids}
+    skipped_dbs = []
     for db_id in sorted(all_db_ids):
         try:
-            db_path = get_bird_db_path(db_id)
+            db_path = resolve_db_path(db_id, db_dir)
             schema_cache[db_id] = get_schema_from_sqlite(db_path)
         except FileNotFoundError as e:
             print(f"      WARNING: {e}")
-    print(f"      Loaded schemas for {len(schema_cache)} databases")
+            skipped_dbs.append(db_id)
+    print(f"      Loaded schemas for {len(schema_cache)}/{len(all_db_ids)} databases")
+    if skipped_dbs:
+        print(f"      Skipped (no DB found): {skipped_dbs}")
 
     # ── 3. Categorize and build pairs ─────────────────────────────────────────
     print(f"\n[3/4] Categorizing pairs...")
+    print(f"      Gold fallback (both-wrong): {'INCLUDED' if include_gold_fallback else 'SKIPPED (use --include-gold-fallback to enable)'}")
+
     preference_pairs: list[dict] = []
     judge_queue: list[dict] = []
     counts = defaultdict(int)
+    skipped_no_schema = 0
 
     for qid in question_ids:
         g = grok[qid]
@@ -116,14 +135,21 @@ def main():
         question = g["question"]
         evidence = g.get("evidence", "")
         gold_sql = g["gold_sql"]
-        schema   = schema_cache.get(db_id, "-- Schema not available")
         difficulty = g.get("difficulty", "unknown")
+
+        if db_id not in schema_cache:
+            skipped_no_schema += 1
+            continue
+
+        schema      = schema_cache[db_id]
+        instruction = build_instruction(question, schema, evidence)
 
         grok_correct     = g["eval"]["result_match"]
         deepseek_correct = d["eval"]["result_match"]
         grok_sql         = g["generated_sql"]
         deepseek_sql     = d["generated_sql"]
 
+        # Capture execution errors for diagnostics
         grok_exec_error = (
             g["gen_execution"].get("error") if "gen_execution" in g else g.get("api_error")
         )
@@ -132,152 +158,217 @@ def main():
         )
 
         base = {
-            "question_id": qid,
-            "db_id": db_id,
-            "question": question,
-            "evidence": evidence,
-            "difficulty": difficulty,
-            "schema": schema,
-            "gold_sql": gold_sql,
-            "instruction": build_instruction(question, schema, evidence),
-            "grok_sql": grok_sql,
-            "deepseek_sql": deepseek_sql,
-            "grok_correct": grok_correct,
-            "deepseek_correct": deepseek_correct,
-            "grok_exec_error": grok_exec_error,
+            "question_id":        qid,
+            "db_id":              db_id,
+            "question":           question,
+            "evidence":           evidence,
+            "difficulty":         difficulty,
+            "schema":             schema,
+            "gold_sql":           gold_sql,
+            "instruction":        instruction,
+            "grok_sql":           grok_sql,
+            "deepseek_sql":       deepseek_sql,
+            "grok_correct":       grok_correct,
+            "deepseek_correct":   deepseek_correct,
+            "grok_exec_error":    grok_exec_error,
             "deepseek_exec_error": deepseek_exec_error,
         }
 
-        # ── CATEGORY 1: clear preference ──────────────────────────────────────
+        # ── CATEGORY 1: clear preference (one right, one wrong) ───────────────
         if grok_correct and not deepseek_correct:
             counts["clear_preference"] += 1
             preference_pairs.append({
                 **base,
-                "category": "clear_preference",
-                "chosen_sql": grok_sql,
-                "chosen_source": "grok",
-                "rejected_sql": deepseek_sql,
+                "category":        "clear_preference",
+                "chosen_sql":      grok_sql,
+                "chosen_source":   "grok",
+                "rejected_sql":    deepseek_sql,
                 "rejected_source": "deepseek",
             })
+
         elif deepseek_correct and not grok_correct:
             counts["clear_preference"] += 1
             preference_pairs.append({
                 **base,
-                "category": "clear_preference",
-                "chosen_sql": deepseek_sql,
-                "chosen_source": "deepseek",
-                "rejected_sql": grok_sql,
+                "category":        "clear_preference",
+                "chosen_sql":      deepseek_sql,
+                "chosen_source":   "deepseek",
+                "rejected_sql":    grok_sql,
                 "rejected_source": "grok",
             })
 
-        # ── CATEGORY 2: judge needed ───────────────────────────────────────────
+        # ── CATEGORY 2: both correct ──────────────────────────────────────────
         elif grok_correct and deepseek_correct:
             if sqls_are_equivalent(grok_sql, deepseek_sql):
-                counts["skip"] += 1
+                counts["skip_identical"] += 1
             else:
                 counts["judge_needed"] += 1
                 judge_queue.append({
                     **base,
-                    "category": "judge_needed",
-                    "sql_a": grok_sql,
-                    "sql_a_source": "grok",
-                    "sql_b": deepseek_sql,
-                    "sql_b_source": "deepseek",
-                    "judge_winner": None,
-                    "judge_reason": None,
-                    "chosen_sql": None,
+                    "category":      "judge_needed",
+                    "sql_a":         grok_sql,
+                    "sql_a_source":  "grok",
+                    "sql_b":         deepseek_sql,
+                    "sql_b_source":  "deepseek",
+                    "judge_winner":  None,
+                    "judge_reason":  None,
+                    "chosen_sql":    None,
                     "chosen_source": None,
-                    "rejected_sql": None,
+                    "rejected_sql":  None,
                     "rejected_source": None,
                 })
 
-        # ── CATEGORY 3: gold vs wrong ──────────────────────────────────────────
+        # ── CATEGORY 3: both wrong ────────────────────────────────────────────
         else:
-            counts["gold_vs_wrong"] += 1
-            preference_pairs.append({
-                **base,
-                "category": "gold_vs_wrong",
-                "chosen_sql": gold_sql,
-                "chosen_source": "gold",
-                "rejected_sql": grok_sql,
-                "rejected_source": "grok",
-                "pair_variant": "gold_vs_grok",
-            })
-            preference_pairs.append({
-                **base,
-                "category": "gold_vs_wrong",
-                "chosen_sql": gold_sql,
-                "chosen_source": "gold",
-                "rejected_sql": deepseek_sql,
-                "rejected_source": "deepseek",
-                "pair_variant": "gold_vs_deepseek",
-            })
+            counts["both_wrong"] += 1
+            if include_gold_fallback:
+                counts["gold_vs_wrong"] += 1
+                # Gold vs grok
+                preference_pairs.append({
+                    **base,
+                    "category":        "gold_vs_wrong",
+                    "chosen_sql":      gold_sql,
+                    "chosen_source":   "gold",
+                    "rejected_sql":    grok_sql,
+                    "rejected_source": "grok",
+                    "pair_variant":    "gold_vs_grok",
+                })
+                # Gold vs deepseek
+                preference_pairs.append({
+                    **base,
+                    "category":        "gold_vs_wrong",
+                    "chosen_sql":      gold_sql,
+                    "chosen_source":   "gold",
+                    "rejected_sql":    deepseek_sql,
+                    "rejected_source": "deepseek",
+                    "pair_variant":    "gold_vs_deepseek",
+                })
+            else:
+                counts["skip_both_wrong"] += 1
 
-    # ── 4. Save outputs ────────────────────────────────────────────────────────
-    print(f"\n[4/4] Saving output files...")
-    with open(OUTPUT_PAIRS_FILE, "w") as f:
+    # ── 4. Print summary ──────────────────────────────────────────────────────
+    total_pairs = len(preference_pairs)
+    gold_pairs  = counts["gold_vs_wrong"] * 2 if include_gold_fallback else 0
+
+    grok_correct_total = sum(1 for i in question_ids if grok[i]["eval"]["result_match"])
+    ds_correct_total   = sum(1 for i in question_ids if deepseek[i]["eval"]["result_match"])
+
+    print(f"\n{'=' * 60}")
+    print("PAIR BREAKDOWN")
+    print("=" * 60)
+    print(f"  Clear preference (1 right, 1 wrong): {counts['clear_preference']:>5} pairs")
+    print(f"  Needs LLM judge  (both correct):     {counts['judge_needed']:>5} pairs")
+    if include_gold_fallback:
+        print(f"  Gold fallback    (both wrong):       {counts['both_wrong']:>5} questions → {gold_pairs} pairs")
+    else:
+        print(f"  Both wrong (skipped):                {counts['both_wrong']:>5} questions")
+    print(f"  Identical SQL (skipped):             {counts['skip_identical']:>5}")
+    if skipped_no_schema:
+        print(f"  No schema found (skipped):           {skipped_no_schema:>5}")
+    print(f"  {'─' * 45}")
+    print(f"  Ready to use now:                    {total_pairs:>5} pairs")
+    print(f"  Needs judge:                         {len(judge_queue):>5} pairs")
+    print(f"  Total after judge:                   {total_pairs + len(judge_queue):>5} pairs")
+    print(f"\nModel Accuracy (on {len(question_ids)} matched questions):")
+    print(f"  Grok:     {grok_correct_total}/{len(question_ids)} ({grok_correct_total/len(question_ids):.1%})")
+    print(f"  DeepSeek: {ds_correct_total}/{len(question_ids)} ({ds_correct_total/len(question_ids):.1%})")
+
+    if dry_run:
+        print(f"\n[dry-run] No files written.")
+        return
+
+    # ── 5. Save outputs ───────────────────────────────────────────────────────
+    print(f"\n[4/4] Saving output files to {output_dir}...")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pairs_file  = output_dir / "bird_preference_pairs.json"
+    judge_file  = output_dir / "bird_judge_queue.json"
+    stats_file  = output_dir / "bird_preference_pairs_stats.json"
+
+    with open(pairs_file, "w") as f:
         json.dump(preference_pairs, f, indent=2)
-    print(f"      bird_preference_pairs.json → {len(preference_pairs)} pairs")
+    print(f"      {pairs_file.name} → {total_pairs} pairs")
 
-    with open(OUTPUT_JUDGE_FILE, "w") as f:
+    with open(judge_file, "w") as f:
         json.dump(judge_queue, f, indent=2)
-    print(f"      bird_judge_queue.json      → {len(judge_queue)} pairs needing judge")
+    print(f"      {judge_file.name} → {len(judge_queue)} pairs")
 
     stats = {
         "source_files": {
-            "grok": str(GROK_FILE),
-            "deepseek": str(DEEPSEEK_FILE),
+            "grok":     str(grok_file),
+            "deepseek": str(deepseek_file),
         },
+        "db_dir": str(db_dir),
+        "include_gold_fallback": include_gold_fallback,
         "total_questions": len(question_ids),
         "breakdown": {
-            "clear_preference": counts["clear_preference"],
-            "judge_needed": counts["judge_needed"],
-            "gold_vs_wrong_questions": counts["gold_vs_wrong"],
-            "skip_identical": counts["skip"],
+            "clear_preference":        counts["clear_preference"],
+            "judge_needed":            counts["judge_needed"],
+            "both_wrong_questions":    counts["both_wrong"],
+            "gold_fallback_pairs":     gold_pairs,
+            "skip_identical":          counts["skip_identical"],
+            "skip_no_schema":          skipped_no_schema,
         },
         "output_pairs": {
-            "ready_to_use": len(preference_pairs),
-            "needs_judge": len(judge_queue),
-            "after_judge_total_estimate": len(preference_pairs) + len(judge_queue),
+            "ready_now":        total_pairs,
+            "needs_judge":      len(judge_queue),
+            "total_after_judge": total_pairs + len(judge_queue),
         },
         "accuracy": {
-            "grok_correct": sum(1 for i in question_ids if grok[i]["eval"]["result_match"]),
-            "deepseek_correct": sum(1 for i in question_ids if deepseek[i]["eval"]["result_match"]),
-            "grok_accuracy_pct": round(
-                sum(1 for i in question_ids if grok[i]["eval"]["result_match"]) / len(question_ids) * 100, 1
-            ),
-            "deepseek_accuracy_pct": round(
-                sum(1 for i in question_ids if deepseek[i]["eval"]["result_match"]) / len(question_ids) * 100, 1
-            ),
+            "grok_correct":     grok_correct_total,
+            "deepseek_correct": ds_correct_total,
+            "grok_pct":         round(grok_correct_total / len(question_ids) * 100, 1),
+            "deepseek_pct":     round(ds_correct_total / len(question_ids) * 100, 1),
         },
     }
-    with open(OUTPUT_STATS_FILE, "w") as f:
+    with open(stats_file, "w") as f:
         json.dump(stats, f, indent=2)
+    print(f"      {stats_file.name} → stats")
 
-    # ── Print summary ─────────────────────────────────────────────────────────
-    print(f"\n{'=' * 60}")
-    print("RESULTS SUMMARY")
-    print("=" * 60)
-    print(f"\nPair Categories:")
-    print(f"  Clear preference (1 right, 1 wrong): {counts['clear_preference']:>4} questions → {counts['clear_preference']:>4} pairs")
-    print(f"  Needs LLM judge (both correct):      {counts['judge_needed']:>4} questions → {counts['judge_needed']:>4} pairs")
-    print(f"  Gold vs wrong (both wrong):           {counts['gold_vs_wrong']:>4} questions → {counts['gold_vs_wrong'] * 2:>4} pairs")
-    print(f"  Skip (both correct, same SQL):        {counts['skip']:>4} questions")
-    print(f"  {'─' * 48}")
-    print(f"  Total:                               {len(question_ids):>4}")
-    print(f"\nOutput Pairs:")
-    print(f"  Ready to use NOW:         {len(preference_pairs)} pairs")
-    print(f"  Pending judge:            {len(judge_queue)} pairs")
-    print(f"  Grand total after judge:  ~{len(preference_pairs) + len(judge_queue)} pairs")
-    print(f"\nModel Accuracy:")
-    print(f"  Grok:       {stats['accuracy']['grok_accuracy_pct']}%  ({stats['accuracy']['grok_correct']}/{len(question_ids)})")
-    print(f"  DeepSeek V3: {stats['accuracy']['deepseek_accuracy_pct']}%  ({stats['accuracy']['deepseek_correct']}/{len(question_ids)})")
-    print(f"\nOutput files:")
-    print(f"  {OUTPUT_PAIRS_FILE}")
-    print(f"  {OUTPUT_JUDGE_FILE}")
-    print(f"  {OUTPUT_STATS_FILE}")
-    print(f"\nStep 1 complete ✓  → Run Step 2 next: python -m src.bird_llm_judge")
+    print(f"\nStep 1 complete ✓")
+    print(f"Next: python -m src.bird.llm_judge --pairs-dir {output_dir}")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Build DPO preference pairs from Grok + DeepSeek BIRD evaluation runs"
+    )
+    parser.add_argument(
+        "--grok", type=Path, required=True,
+        help="Path to Grok pipeline result JSON"
+    )
+    parser.add_argument(
+        "--deepseek", type=Path, required=True,
+        help="Path to DeepSeek pipeline result JSON"
+    )
+    parser.add_argument(
+        "--db-dir", type=Path, required=True,
+        help="Path to BIRD databases directory (e.g. .../train_databases/train_databases)"
+    )
+    parser.add_argument(
+        "--output-dir", type=Path,
+        default=PROJECT_ROOT / "results",
+        help="Where to save output files (default: project_root/results)"
+    )
+    parser.add_argument(
+        "--include-gold-fallback", action="store_true",
+        help="Include gold SQL pairs for both-wrong questions (risky — see CLAUDE.md)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print stats only, do not save any files"
+    )
+    args = parser.parse_args()
+
+    build_pairs(
+        grok_file=args.grok,
+        deepseek_file=args.deepseek,
+        db_dir=args.db_dir,
+        output_dir=args.output_dir,
+        include_gold_fallback=args.include_gold_fallback,
+        dry_run=args.dry_run,
+    )
