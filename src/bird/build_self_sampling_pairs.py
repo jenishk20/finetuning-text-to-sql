@@ -103,38 +103,74 @@ def build_pairs(
     max_questions: int | None,
     cutoff_len: int,
     use_hf: bool,
+    save_candidates: Path | None = None,
+    candidates_file: Path | None = None,
+    generate_only: bool = False,
 ):
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # ── Load training questions ───────────────────────────────────────────────
-    print("[1/4] Loading BIRD train questions ...")
-    if use_hf:
-        questions = load_train_questions_from_hf()
-        # HF dataset doesn't include db_path; we need db_dir to execute
-        for q in questions:
-            sqlite_path = Path(db_dir) / q["db_id"] / f"{q['db_id']}.sqlite"
-            q["db_path"] = str(sqlite_path) if sqlite_path.exists() else None
+    # ─────────────────────────────────────────────────────────────────────────
+    # PHASE SPLIT — keeps a GPU job from sitting idle (and getting killed by the
+    # cluster) during the long CPU-only SQL-execution phase:
+    #   GPU job : --generate-only --save-candidates CAND.json  (vLLM, exits before exec)
+    #   CPU job : --candidates-file CAND.json                  (no vLLM, executes + pairs)
+    # Pass none of these three flags to run both phases in one process (original).
+    # ─────────────────────────────────────────────────────────────────────────
+
+    if candidates_file:
+        # ── CPU PHASE: load precomputed candidates; vLLM is never imported ────
+        print(f"[1/2] Loading precomputed candidates from {candidates_file} ...")
+        with open(candidates_file) as f:
+            questions = json.load(f)
+        all_candidates = [q["candidates"] for q in questions]
+        print(f"      Loaded {len(questions)} candidate sets")
     else:
-        questions = load_train_questions_from_json(train_json, db_dir)
-    questions = [q for q in questions if q["db_path"]]
-    if max_questions:
-        questions = questions[:max_questions]
-    print(f"      Loaded {len(questions)} questions with valid databases")
+        # ── GPU PHASE: load train questions, then generate K candidates each ──
+        print("[1/4] Loading BIRD train questions ...")
+        if use_hf:
+            questions = load_train_questions_from_hf()
+            # HF dataset doesn't include db_path; we need db_dir to execute
+            for q in questions:
+                sqlite_path = Path(db_dir) / q["db_id"] / f"{q['db_id']}.sqlite"
+                q["db_path"] = str(sqlite_path) if sqlite_path.exists() else None
+        else:
+            questions = load_train_questions_from_json(train_json, db_dir)
+        questions = [q for q in questions if q["db_path"]]
+        if max_questions:
+            questions = questions[:max_questions]
+        print(f"      Loaded {len(questions)} questions with valid databases")
 
-    # ── Load vLLM engine ──────────────────────────────────────────────────────
-    print(f"\n[2/4] Loading vLLM engine (base={base_model}, adapter={adapter}) ...")
-    engine = BIRDvLLMEngine(
-        base_model=base_model,
-        adapter_path=str(adapter) if adapter else None,
-        max_model_len=cutoff_len,
-    )
+        # ── Load vLLM engine ──────────────────────────────────────────────────
+        print(f"\n[2/4] Loading vLLM engine (base={base_model}, adapter={adapter}) ...")
+        engine = BIRDvLLMEngine(
+            base_model=base_model,
+            adapter_path=str(adapter) if adapter else None,
+            max_model_len=cutoff_len,
+        )
 
-    # ── Generate K candidates per question ────────────────────────────────────
-    print(f"\n[3/4] Generating K={k} samples for {len(questions)} questions ...")
-    items = [(q["question"], q["schema"], q["evidence"]) for q in questions]
-    start = time.time()
-    all_candidates = engine.generate(items, k=k, temperature=temperature)
-    print(f"      Done in {round((time.time() - start) / 60, 1)} min")
+        # ── Generate K candidates per question ────────────────────────────────
+        print(f"\n[3/4] Generating K={k} samples for {len(questions)} questions ...")
+        items = [(q["question"], q["schema"], q["evidence"]) for q in questions]
+        start = time.time()
+        all_candidates = engine.generate(items, k=k, temperature=temperature)
+        print(f"      Done in {round((time.time() - start) / 60, 1)} min")
+
+        # ── Save raw candidates so the CPU phase can execute them off the GPU ──
+        if save_candidates or generate_only:
+            dump_path = save_candidates or (output_file.parent / "candidates.json")
+            dump_path.parent.mkdir(parents=True, exist_ok=True)
+            cand_dump = []
+            for q, cands in zip(questions, all_candidates):
+                rec = dict(q)
+                rec["candidates"] = cands
+                cand_dump.append(rec)
+            with open(dump_path, "w") as f:
+                json.dump(cand_dump, f, indent=2)
+            print(f"      Saved {len(cand_dump)} candidate sets to {dump_path}")
+            if generate_only:
+                print("      --generate-only set: exiting before execution. "
+                      "Run the CPU build-pairs job next (--candidates-file).")
+                return
 
     # ── Execute, classify, build pairs ────────────────────────────────────────
     print(f"\n[4/4] Executing candidates and building pairs ...")
@@ -240,15 +276,16 @@ def build_pairs(
 
 def main():
     parser = argparse.ArgumentParser(description="Build self-sampling DPO pairs with vLLM")
-    parser.add_argument("--base-model",    type=str,  required=True)
+    parser.add_argument("--base-model",    type=str,  default="Qwen/Qwen2.5-Coder-7B-Instruct",
+                        help="Base model (only used in the GPU generation phase)")
     parser.add_argument("--adapter",       type=Path, default=None,
                         help="LoRA adapter path (e.g., the SFT adapter)")
     parser.add_argument("--output-file",   type=Path, required=True,
                         help="Where to save the DPO-format pairs JSON")
     parser.add_argument("--train-json",    type=Path, default=None,
                         help="Path to train.json (omit + use --use-hf for HF dataset)")
-    parser.add_argument("--db-dir",        type=Path, required=True,
-                        help="BIRD train_databases directory")
+    parser.add_argument("--db-dir",        type=Path, default=None,
+                        help="BIRD train_databases directory (needed unless --candidates-file)")
     parser.add_argument("--k",             type=int,   default=4)
     parser.add_argument("--temperature",   type=float, default=0.8)
     parser.add_argument("--max-questions", type=int,   default=None,
@@ -256,10 +293,22 @@ def main():
     parser.add_argument("--cutoff-len",    type=int,   default=8192)
     parser.add_argument("--use-hf",        action="store_true",
                         help="Load questions from xu3kev/BIRD-SQL-data-train HF dataset")
+    # ── Phase-split flags (avoid GPU-idle kills; see build_pairs docstring) ────
+    parser.add_argument("--save-candidates", type=Path, default=None,
+                        help="GPU phase: dump raw K candidates here for the CPU phase")
+    parser.add_argument("--candidates-file", type=Path, default=None,
+                        help="CPU phase: read candidates from here, skip vLLM entirely")
+    parser.add_argument("--generate-only",   action="store_true",
+                        help="GPU phase: generate + save candidates, then exit before execution")
     args = parser.parse_args()
 
-    if not args.use_hf and not args.train_json:
-        parser.error("Must provide --train-json or --use-hf")
+    # Validate inputs per phase. The CPU phase (--candidates-file) needs neither
+    # a question source nor a db-dir (both are baked into the candidates file).
+    if not args.candidates_file:
+        if not args.use_hf and not args.train_json:
+            parser.error("Must provide --train-json or --use-hf (or --candidates-file for the CPU phase)")
+        if not args.use_hf and not args.db_dir:
+            parser.error("--db-dir is required with --train-json")
 
     build_pairs(
         base_model=args.base_model,
@@ -272,6 +321,9 @@ def main():
         max_questions=args.max_questions,
         cutoff_len=args.cutoff_len,
         use_hf=args.use_hf,
+        save_candidates=args.save_candidates,
+        candidates_file=args.candidates_file,
+        generate_only=args.generate_only,
     )
 
 
