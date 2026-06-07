@@ -31,7 +31,7 @@ export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
 BASE_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct
-SFT_ADAPTER=/scratch/phalle.y/bird_sft_adapter_7b        # same as job 1
+SFT_ADAPTER=/scratch/phalle.y/bird_sft_adapter_7b/final_adapter   # same as job 1 (verified)
 PAIRS=/scratch/phalle.y/results_self_sampling_7b/bird_ss_pairs_7b.json
 OUT=/scratch/phalle.y/bird_dpo_adapter_7b_selfsampling   # NEW dir — does not overwrite 50.3% adapter
 

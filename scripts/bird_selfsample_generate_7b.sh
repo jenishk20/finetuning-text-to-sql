@@ -33,7 +33,7 @@ pip install -q "vllm==0.6.3" datasets 2>&1 | tail -3
 
 # ── Config (verify SFT_ADAPTER points at a dir with adapter_config.json) ─────
 BASE_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct
-SFT_ADAPTER=/scratch/phalle.y/bird_sft_adapter_7b        # ⚠️ see VERIFY note below
+SFT_ADAPTER=/scratch/phalle.y/bird_sft_adapter_7b/final_adapter   # verified: dir holds adapter_config.json
 DB_DIR=/scratch/phalle.y/bird_train/train/train_databases
 OUT=/scratch/phalle.y/results_self_sampling_7b/bird_ss_pairs_7b.json
 MAXQ=${MAXQ:-1500}                                        # override: MAXQ=20 sbatch ... for smoke test
