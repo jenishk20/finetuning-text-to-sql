@@ -63,6 +63,57 @@ def extract_sql(text: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CoT (ExCoT) PROMPT + EXTRACTOR
+# Used by build_cot_sft_data (seed), on-policy CoT pair building, and CoT eval.
+# Kept separate from build_instruction/extract_sql so the direct-SQL path is
+# untouched. The model REASONS first, then emits the final query in a ```sql block.
+# ─────────────────────────────────────────────────────────────────────────────
+
+COT_SYSTEM_PROMPT = (
+    "You are an expert SQLite query writer. Reason step by step about the schema "
+    "and the question, then output the final query in a ```sql code block."
+)
+
+
+def build_cot_instruction(question: str, schema: str, evidence: str = "") -> str:
+    """CoT prompt: ask for step-by-step reasoning, then a final fenced SQL query."""
+    evidence_block = f"External Knowledge:\n{evidence}\n\n" if evidence.strip() else ""
+    return (
+        "Given the database schema and question, work out the correct SQLite "
+        "query step by step.\n\n"
+        f"Database Schema:\n{schema}\n\n"
+        f"{evidence_block}"
+        f"Question: {question}\n\n"
+        "Think step by step:\n"
+        "1. Which tables and columns are relevant?\n"
+        "2. What joins, filters, grouping, and ordering are needed?\n"
+        "3. Apply any external knowledge and handle edge cases.\n\n"
+        "Then give the final answer as:\n"
+        "```sql\n<final query>\n```"
+    )
+
+
+_COT_FENCE_RE = re.compile(r"```(?:sql)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def extract_final_sql(text: str) -> str:
+    """Return the LAST fenced SQL block — the final query after the reasoning.
+
+    (Differs from extract_sql, which takes the FIRST fence: in CoT output the
+    model may show intermediate queries while reasoning; we want the last one.)
+    """
+    text = text.strip()
+    matches = _COT_FENCE_RE.findall(text)
+    if matches:
+        sql = matches[-1].strip()
+    else:
+        # No code fence — fall back to the last SELECT/WITH statement onward.
+        starts = list(re.finditer(r"(?is)\b(WITH|SELECT)\b", text))
+        sql = text[starts[-1].start():].strip() if starts else text
+    return sql if sql.endswith(";") else sql + ";"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # FLASH-ATTENTION HELPER — used by SFT + DPO trainers
 # ─────────────────────────────────────────────────────────────────────────────
 
