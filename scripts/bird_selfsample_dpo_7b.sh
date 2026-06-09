@@ -30,6 +30,11 @@ export TORCH_HOME=/scratch/phalle.y/torch_cache
 export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
+# Pin trl + transformers to a mutually-compatible pair. A newer trl expects
+# transformers._BaseConfig._VALID_DICT_FIELDS, absent in the 4.46.x we need for
+# vLLM 0.6.3. trl 0.12.x matches both transformers 4.46.3 AND this script's API.
+pip install -q "trl==0.12.2" "transformers==4.46.3" 2>&1 | tail -3
+
 BASE_MODEL=Qwen/Qwen2.5-Coder-7B-Instruct
 SFT_ADAPTER=/scratch/phalle.y/bird_sft_adapter_7b/final_adapter   # same as job 1 (verified)
 PAIRS=/scratch/phalle.y/results_self_sampling_7b/bird_ss_pairs_7b.json

@@ -29,8 +29,9 @@ export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
 # NOTE: dpo_train.py saves to <output-dir>/final_adapter — eval must include it.
+# Dev set now lives on scratch at bird_dev/dev_20240627/ (dev.json + dev_databases).
 PYTHONUNBUFFERED=1 python -m src.bird.eval_finetuned \
     --adapter    /scratch/phalle.y/bird_dpo_adapter_7b_selfsampling/final_adapter \
-    --dev-json   /home/phalle.y/Jenish-DPO-GRPO/bird_data/dev.json \
-    --db-dir     /home/phalle.y/Jenish-DPO-GRPO/bird_data/dev_databases \
+    --dev-json   /scratch/phalle.y/bird_dev/dev_20240627/dev.json \
+    --db-dir     /scratch/phalle.y/bird_dev/dev_20240627/dev_databases \
     --output-dir /scratch/phalle.y/results_self_sampling_7b_eval
