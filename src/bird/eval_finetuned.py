@@ -38,7 +38,10 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from src.shared.sqlite_executor import execute_sqlite_query
 from src.shared.evaluator import compare_results, compute_metrics
-from src.bird.inference import build_instruction, SYSTEM_PROMPT
+from src.bird.inference import (
+    build_instruction, SYSTEM_PROMPT,
+    build_cot_instruction, extract_final_sql, COT_SYSTEM_PROMPT,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DEFAULT_BASE_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
@@ -85,10 +88,15 @@ def load_model(adapter: Path | None, base_only: bool = False, base_model: str = 
 # INFERENCE
 # ─────────────────────────────────────────────────────────────────────────────
 
-def generate_sql(model, tokenizer, schema: str, question: str, evidence: str) -> str:
+def generate_sql(model, tokenizer, schema: str, question: str, evidence: str, cot: bool = False) -> str:
+    # CoT mode (for CoT-SFT / ExCoT models): reason first, then emit the final
+    # SQL — needs the CoT prompt, more tokens, and the LAST fenced block.
+    system_prompt = COT_SYSTEM_PROMPT if cot else SYSTEM_PROMPT
+    user_prompt = (build_cot_instruction(question, schema, evidence) if cot
+                   else build_instruction(question, schema, evidence))
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": build_instruction(question, schema, evidence)},
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
     ]
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
@@ -96,7 +104,7 @@ def generate_sql(model, tokenizer, schema: str, question: str, evidence: str) ->
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
-            max_new_tokens=256,
+            max_new_tokens=768 if cot else 256,   # CoT needs room to reason before the SQL
             do_sample=False,
             temperature=1.0,
             pad_token_id=tokenizer.eos_token_id,
@@ -104,6 +112,9 @@ def generate_sql(model, tokenizer, schema: str, question: str, evidence: str) ->
 
     generated_ids = outputs[0][inputs["input_ids"].shape[-1]:]
     response = tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+
+    if cot:
+        return extract_final_sql(response)   # last ```sql block, after the reasoning
 
     fence_match = re.search(r"```(?:sql)?\s*\n?(.*?)```", response, re.DOTALL | re.IGNORECASE)
     if fence_match:
@@ -151,9 +162,12 @@ def run_evaluation(
     base_only: bool = False,
     resume_file: Path | None = None,
     base_model: str = DEFAULT_BASE_MODEL,
+    cot: bool = False,
 ):
     short_name  = base_model.split("/")[-1].lower().replace("qwen2.5-coder-", "qwen").replace("-instruct", "")
-    model_label = f"{short_name}-bird-base" if base_only else f"{short_name}-bird-dpo"
+    suffix      = "-cot" if cot else ""
+    model_label = (f"{short_name}-bird-base{suffix}" if base_only
+                   else f"{short_name}-bird-dpo{suffix}")
 
     # ── Resume support ────────────────────────────────────────────────────────
     completed_ids: set = set()
@@ -184,6 +198,7 @@ def run_evaluation(
     print(f"  Dev JSON:   {dev_json}")
     print(f"  DB dir:     {db_dir}")
     print(f"  Adapter:    {adapter or 'none (base model)'}")
+    print(f"  Mode:       {'CoT (reason + final SQL)' if cot else 'direct SQL'}")
     print(f"{'=' * 70}\n")
 
     schema_cache: dict = {}
@@ -213,7 +228,7 @@ def run_evaluation(
 
         try:
             start = time.time()
-            generated_sql = generate_sql(model, tokenizer, schema, question, evidence)
+            generated_sql = generate_sql(model, tokenizer, schema, question, evidence, cot=cot)
             gen_time = round(time.time() - start, 2)
             print(f"    Generated ({gen_time}s): {generated_sql[:100]}")
         except Exception as e:
@@ -327,6 +342,9 @@ if __name__ == "__main__":
                         help="Path to partial results JSON to resume an interrupted run")
     parser.add_argument("--base-model", type=str, default=DEFAULT_BASE_MODEL,
                         help=f"HF base model ID (default: {DEFAULT_BASE_MODEL}). Use Qwen/Qwen2.5-Coder-14B-Instruct for 14B.")
+    parser.add_argument("--cot", action="store_true",
+                        help="CoT eval: use the reasoning prompt + extract the final SQL "
+                             "(for CoT-SFT / ExCoT models like bird_cot_sft_adapter_7b)")
 
     args = parser.parse_args()
 
@@ -339,4 +357,5 @@ if __name__ == "__main__":
         base_only=args.base_only,
         resume_file=args.resume,
         base_model=args.base_model,
+        cot=args.cot,
     )
