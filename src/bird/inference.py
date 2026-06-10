@@ -185,11 +185,17 @@ class BIRDvLLMEngine:
         else:
             print(f"vLLM engine loaded (base model only, no adapter)")
 
-    def _build_chat_prompt(self, question: str, schema: str, evidence: str) -> str:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": build_instruction(question, schema, evidence)},
-        ]
+    def _build_chat_prompt(self, question: str, schema: str, evidence: str, cot: bool = False) -> str:
+        if cot:
+            messages = [
+                {"role": "system", "content": COT_SYSTEM_PROMPT},
+                {"role": "user",   "content": build_cot_instruction(question, schema, evidence)},
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": build_instruction(question, schema, evidence)},
+            ]
         return self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
@@ -201,6 +207,7 @@ class BIRDvLLMEngine:
         temperature: float = 0.0,
         top_p: float = 1.0,
         max_tokens: int = 512,
+        cot: bool = False,
     ) -> list[list[str]]:
         """
         Args:
@@ -215,7 +222,7 @@ class BIRDvLLMEngine:
         from vllm import SamplingParams
 
         items = list(items)
-        prompts = [self._build_chat_prompt(q, s, e) for q, s, e in items]
+        prompts = [self._build_chat_prompt(q, s, e, cot=cot) for q, s, e in items]
 
         sampling_params = SamplingParams(
             n=k,
@@ -232,6 +239,9 @@ class BIRDvLLMEngine:
 
         results: list[list[str]] = []
         for out in outputs:
-            cands = [extract_sql(o.text) for o in out.outputs]
+            # CoT: keep the RAW reasoning+SQL text (caller extracts the final SQL
+            # to execute, but trains DPO on the whole chain). Direct: extract SQL.
+            cands = ([o.text for o in out.outputs] if cot
+                     else [extract_sql(o.text) for o in out.outputs])
             results.append(cands)
         return results

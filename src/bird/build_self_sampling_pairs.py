@@ -30,7 +30,9 @@ import sqlite3
 import time
 from pathlib import Path
 
-from src.bird.inference import BIRDvLLMEngine, build_instruction
+from src.bird.inference import (
+    BIRDvLLMEngine, build_instruction, build_cot_instruction, extract_final_sql,
+)
 from src.shared.sqlite_executor import execute_sqlite_query
 
 
@@ -106,6 +108,8 @@ def build_pairs(
     save_candidates: Path | None = None,
     candidates_file: Path | None = None,
     generate_only: bool = False,
+    cot: bool = False,
+    max_new_tokens: int = 512,
 ):
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -149,10 +153,13 @@ def build_pairs(
         )
 
         # ── Generate K candidates per question ────────────────────────────────
-        print(f"\n[3/4] Generating K={k} samples for {len(questions)} questions ...")
+        mode = "CoT (reasoning + SQL)" if cot else "direct SQL"
+        print(f"\n[3/4] Generating K={k} samples for {len(questions)} questions [{mode}] ...")
         items = [(q["question"], q["schema"], q["evidence"]) for q in questions]
         start = time.time()
-        all_candidates = engine.generate(items, k=k, temperature=temperature)
+        all_candidates = engine.generate(
+            items, k=k, temperature=temperature, max_tokens=max_new_tokens, cot=cot
+        )
         print(f"      Done in {round((time.time() - start) / 60, 1)} min")
 
         # ── Save raw candidates so the CPU phase can execute them off the GPU ──
@@ -188,13 +195,13 @@ def build_pairs(
     for i, (q, cands) in enumerate(zip(questions, all_candidates)):
         gold_exec = execute_sqlite_query(q["gold_sql"], q["db_path"], timeout=EXEC_TIMEOUT)
         correct, wrong = [], []
-        for sql in cands:
-            cand_exec = execute_sqlite_query(sql, q["db_path"], timeout=EXEC_TIMEOUT)
+        for cand in cands:
+            # CoT: execute the EXTRACTED final SQL, but keep the FULL CoT text as
+            # the chosen/rejected (DPO learns the reasoning chain). Direct: cand IS the SQL.
+            exec_sql = extract_final_sql(cand) if cot else cand
+            cand_exec = execute_sqlite_query(exec_sql, q["db_path"], timeout=EXEC_TIMEOUT)
             ev = compare_results(cand_exec, gold_exec)
-            if ev["result_match"]:
-                correct.append(sql)
-            else:
-                wrong.append(sql)
+            (correct if ev["result_match"] else wrong).append(cand)
 
         per_question_stats.append({
             "question_id": q["question_id"],
@@ -207,7 +214,8 @@ def build_pairs(
         elif not wrong:
             skipped["all_correct"] += 1
         else:
-            instruction = build_instruction(q["question"], q["schema"], q["evidence"])
+            instruction = (build_cot_instruction(q["question"], q["schema"], q["evidence"])
+                           if cot else build_instruction(q["question"], q["schema"], q["evidence"]))
             pairs.append({
                 "instruction":     instruction,
                 "input":           "",
@@ -300,6 +308,13 @@ def main():
                         help="CPU phase: read candidates from here, skip vLLM entirely")
     parser.add_argument("--generate-only",   action="store_true",
                         help="GPU phase: generate + save candidates, then exit before execution")
+    # ── CoT (ExCoT on-policy) ─────────────────────────────────────────────────
+    parser.add_argument("--cot", action="store_true",
+                        help="Generate CoT (reasoning + SQL); pairs store the full chain, "
+                             "execution uses the extracted final SQL. Pass on BOTH the "
+                             "generate and build-pairs jobs.")
+    parser.add_argument("--max-new-tokens", type=int, default=512,
+                        help="Max generated tokens per sample (use ~1024 for CoT)")
     args = parser.parse_args()
 
     # Validate inputs per phase. The CPU phase (--candidates-file) needs neither
@@ -324,6 +339,8 @@ def main():
         save_candidates=args.save_candidates,
         candidates_file=args.candidates_file,
         generate_only=args.generate_only,
+        cot=args.cot,
+        max_new_tokens=args.max_new_tokens,
     )
 
 
