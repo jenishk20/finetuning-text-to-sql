@@ -32,13 +32,18 @@ export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
 LIMIT=${LIMIT:-0}                         # full 1534 by default; LIMIT=500 = quick checkpoint
+# Override per run, e.g.:
+#   ADAPTER=/scratch/phalle.y/bird_cot_dpo_r1_7b/final_adapter \
+#   OUTDIR=/scratch/phalle.y/results_cot_dpo_r1_eval LIMIT=500 sbatch scripts/bird_eval_7b_cot_sft.sh
+ADAPTER=${ADAPTER:-/scratch/phalle.y/bird_cot_sft_adapter_7b/final_adapter}
+OUTDIR=${OUTDIR:-/scratch/phalle.y/results_cot_sft_7b_eval}
 EXTRA=""
 [ "$LIMIT" -gt 0 ] && EXTRA="--limit $LIMIT"
 
 PYTHONUNBUFFERED=1 python -m src.bird.eval_finetuned \
-    --adapter    /scratch/phalle.y/bird_cot_sft_adapter_7b/final_adapter \
+    --adapter    "$ADAPTER" \
     --dev-json   /scratch/phalle.y/bird_dev/dev_20240627/dev.json \
     --db-dir     /scratch/phalle.y/bird_dev/dev_20240627/dev_databases \
-    --output-dir /scratch/phalle.y/results_cot_sft_7b_eval \
+    --output-dir "$OUTDIR" \
     --cot \
     $EXTRA
