@@ -50,7 +50,7 @@ fi
 PYTHONUNBUFFERED=1 python -m src.bird.grpo_train \
     --train-json  /scratch/phalle.y/bird_train/train/train.json \
     --db-dir      /scratch/phalle.y/bird_train/train/train_databases \
-    --sft-adapter /home/phalle.y/Jenish-DPO-GRPO/bird_sft_adapter_1 \
+    --sft-adapter /scratch/phalle.y/bird_sft_adapter_7b \
     --output-dir  /scratch/phalle.y/bird_grpo_adapter_7b_from_sft \
     --epochs      1 \
     --num-gen     4 \

@@ -163,12 +163,22 @@ def load_model_for_grpo(base_model: str, sft_adapter: Path | None):
     )
     model = prepare_model_for_kbit_training(model)
 
-    if sft_adapter and Path(sft_adapter).exists():
+    if sft_adapter is not None:
+        # Fail loud: a path was requested but isn't visible. On HPC, /home is
+        # often NOT mounted on GPU compute nodes — silently falling back to a
+        # fresh LoRA wastes the entire job (and isn't the intended experiment).
+        if not Path(sft_adapter).exists():
+            raise FileNotFoundError(
+                f"--sft-adapter was given but the path does not exist or is not "
+                f"visible on this compute node:\n    {sft_adapter}\n"
+                f"On HPC, /home is frequently not mounted on GPU nodes — stage the "
+                f"adapter under /scratch and point --sft-adapter there."
+            )
         print(f"Loading SFT adapter from {sft_adapter}...")
         model = PeftModel.from_pretrained(model, str(sft_adapter), is_trainable=True)
         print("SFT adapter loaded — GRPO will train on top of SFT weights")
     else:
-        print("No SFT adapter — adding fresh LoRA for GRPO training")
+        print("No --sft-adapter provided — adding fresh LoRA for GRPO training")
         lora_config = LoraConfig(
             r=32,
             lora_alpha=64,

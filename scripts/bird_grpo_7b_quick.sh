@@ -1,7 +1,8 @@
 #!/bin/bash
 # QUICK GRPO validation run for 7B BIRD — ~3-4h on H200, then eval to sanity-check.
-# Uses a 1,000-question subset (vs 2,000 in the full run) and saves every 50 steps,
-# so even if the 4h wall is hit you have an evaluable checkpoint.
+# Uses a 600-question subset (~2.5 min/step measured → ~3.5h for 1 epoch, fits the
+# 4h wall with margin) and saves every 50 steps. 600 chosen so the run COMPLETES
+# and writes final_adapter; bump back up once you move to the full run.
 # Starts from the SFT adapter; reward = SQL execution match against gold (binary 1/0).
 
 #SBATCH --partition=gpu
@@ -23,16 +24,16 @@ export TORCH_HOME=/scratch/phalle.y/torch_cache
 export TRITON_CACHE_DIR=/scratch/phalle.y/triton_cache
 export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
-# ── Step 1: build a 1,000-question subset (random, seeded) from full train.json ──
+# ── Step 1: build a 600-question subset (random, seeded) from full train.json ──
 FULL_JSON=/scratch/phalle.y/bird_train/train/train.json
-QUICK_JSON=/scratch/phalle.y/bird_train/train/train_quick1000.json
+QUICK_JSON=/scratch/phalle.y/bird_train/train/train_quick600.json
 if [ ! -f "$QUICK_JSON" ]; then
-    echo "Building 1,000-question subset..."
+    echo "Building 600-question subset..."
     python3 -c "
 import json, random
 random.seed(42)
 d = json.load(open('$FULL_JSON'))
-sub = random.sample(d, 1000)
+sub = random.sample(d, 600)
 json.dump(sub, open('$QUICK_JSON', 'w'), indent=2)
 print(f'Saved {len(sub)} examples to $QUICK_JSON')
 "
@@ -42,7 +43,7 @@ fi
 PYTHONUNBUFFERED=1 python -m src.bird.grpo_train \
     --train-json  "$QUICK_JSON" \
     --db-dir      /scratch/phalle.y/bird_train/train/train_databases \
-    --sft-adapter /home/phalle.y/Jenish-DPO-GRPO/bird_sft_adapter_1 \
+    --sft-adapter /scratch/phalle.y/bird_sft_adapter_7b \
     --output-dir  /scratch/phalle.y/bird_grpo_adapter_7b_quick \
     --epochs      1 \
     --num-gen     4 \
