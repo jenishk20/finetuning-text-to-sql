@@ -207,6 +207,7 @@ def train(
     max_new_tokens: int = 512,
     per_device_batch_size: int = 1,
     grad_accum_steps: int = 8,
+    save_steps: int = 50,
     resume_from_checkpoint: str | None = None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -247,7 +248,7 @@ def train(
 
         # Logging + saving
         logging_steps=10,
-        save_steps=200,
+        save_steps=save_steps,
         save_total_limit=3,
         report_to="none",
 
@@ -309,6 +310,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-tokens",   type=int,   default=512)
     parser.add_argument("--batch-size",   type=int,   default=1)
     parser.add_argument("--grad-accum",   type=int,   default=8)
+    parser.add_argument("--save-steps",   type=int,   default=50,
+                        help="Checkpoint every N optimizer steps (frequent = evaluable if killed)")
     parser.add_argument("--resume",       type=str,   default=None,
                         help="Path to checkpoint dir to resume from (e.g. output_dir/checkpoint-200)")
 
@@ -325,5 +328,6 @@ if __name__ == "__main__":
         max_new_tokens=args.max_tokens,
         per_device_batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum,
+        save_steps=args.save_steps,
         resume_from_checkpoint=args.resume,
     )
