@@ -43,7 +43,7 @@ fi
 PYTHONUNBUFFERED=1 python -m src.bird.grpo_train \
     --train-json  "$QUICK_JSON" \
     --db-dir      /scratch/phalle.y/bird_train/train/train_databases \
-    --sft-adapter /scratch/phalle.y/bird_sft_adapter_7b \
+    --sft-adapter /scratch/phalle.y/bird_sft_adapter_7b/final_adapter \
     --output-dir  /scratch/phalle.y/bird_grpo_adapter_7b_quick \
     --epochs      1 \
     --num-gen     4 \
