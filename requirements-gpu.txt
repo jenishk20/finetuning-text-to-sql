@@ -7,10 +7,12 @@ tabulate>=0.9.0
 datasets>=3.0.0
 
 # Fine-tuning and inference
-torch>=2.1.0
-transformers>=4.40.0
-peft>=0.12.0
-trl>=0.12.0
+# NOTE: keep vllm OUT of this env — it pins transformers/torch versions that
+# break TRL's GRPOTrainer. Use a separate env for Best-of-N eval (vllm==0.6.3).
+torch>=2.4.0
+transformers>=4.48.0
+peft>=0.14.0
+trl>=0.14.0          # GRPOTrainer (max_completion_length/beta/processing_class) requires >=0.14
 bitsandbytes>=0.43.0
-accelerate>=0.30.0
+accelerate>=1.0.0
 scipy

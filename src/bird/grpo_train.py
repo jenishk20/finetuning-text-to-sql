@@ -226,7 +226,8 @@ def train(
         # Core GRPO
         num_generations=num_generations,       # N candidates per question
         temperature=0.9,                        # diversity in generated candidates
-        max_new_tokens=max_new_tokens,
+        max_completion_length=max_new_tokens,   # generated SQL length cap
+        max_prompt_length=3072,                 # keep long BIRD schemas (default 512 truncates)
 
         # Training
         num_train_epochs=num_epochs,
@@ -237,7 +238,7 @@ def train(
         warmup_ratio=0.05,
 
         # KL penalty — keeps model close to SFT base
-        kl_coef=0.05,
+        beta=0.05,
 
         # Memory
         bf16=True,
@@ -257,7 +258,7 @@ def train(
     # ── Trainer ───────────────────────────────────────────────────────────────
     trainer = GRPOTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         reward_funcs=[sql_reward_fn],
         args=grpo_config,
         train_dataset=dataset,

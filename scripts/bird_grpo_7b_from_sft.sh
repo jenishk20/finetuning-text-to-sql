@@ -13,7 +13,7 @@
 #SBATCH --output=/scratch/phalle.y/bird_grpo_7b_sft_%j.out
 #SBATCH --error=/scratch/phalle.y/bird_grpo_7b_sft_%j.err
 
-source activate /scratch/phalle.y/py310env
+source activate /scratch/phalle.y/grpo_env
 cd /scratch/phalle.y/finetuning-text-to-sql
 
 export HF_HOME=/scratch/phalle.y/hf_cache
@@ -56,5 +56,5 @@ PYTHONUNBUFFERED=1 python -m src.bird.grpo_train \
     --num-gen     4 \
     --lr          1e-6 \
     --max-tokens  512 \
-    --batch-size  1 \
+    --batch-size  4 \
     --grad-accum  8
