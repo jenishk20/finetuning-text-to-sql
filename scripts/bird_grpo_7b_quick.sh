@@ -1,14 +1,15 @@
 #!/bin/bash
-# QUICK GRPO validation run for 7B BIRD — ~3-4h on H200, then eval to sanity-check.
-# Uses a 600-question subset (~2.5 min/step measured → ~3.5h for 1 epoch, fits the
-# 4h wall with margin) and saves every 50 steps. 600 chosen so the run COMPLETES
-# and writes final_adapter; bump back up once you move to the full run.
+# QUICK GRPO validation run for 7B BIRD — then eval to sanity-check.
+# 600-question subset. Step time is SQL-execution bound and varies a lot by node
+# (2.5-8 min/step observed), so wall-clock is unpredictable. Strategy: save every
+# 10 steps + an 8h ceiling so you ALWAYS have an evaluable checkpoint even if it's
+# cut short, and a fast node still finishes early and releases the allocation.
 # Starts from the SFT adapter; reward = SQL execution match against gold (binary 1/0).
 
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:h200:1
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --job-name=bird-grpo-7b-quick
 #SBATCH --mem=80GB
 #SBATCH --ntasks=1
@@ -51,4 +52,4 @@ PYTHONUNBUFFERED=1 python -m src.bird.grpo_train \
     --max-tokens  512 \
     --batch-size  4 \
     --grad-accum  8 \
-    --save-steps  50
+    --save-steps  10

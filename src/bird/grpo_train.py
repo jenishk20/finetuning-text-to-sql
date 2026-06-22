@@ -119,12 +119,20 @@ def sql_reward_fn(completions, gold_sql, db_path, **kwargs) -> list[float]:
     if isinstance(db_path, str):
         db_path = [db_path] * len(completions)
 
+    # Cache gold results per (db, gold_sql): the N candidates for one prompt all
+    # share the same gold query, so executing it once instead of N times roughly
+    # halves the SQL work that dominates step time.
+    gold_cache: dict = {}
+
     for completion, g_sql, d_path in zip(completions, gold_sql, db_path):
         try:
             # completion is the raw model output text
             gen_sql = extract_sql(completion)
             gen_result  = execute_sql(gen_sql, d_path)
-            gold_result = execute_sql(g_sql,   d_path)
+            cache_key = (d_path, g_sql)
+            if cache_key not in gold_cache:
+                gold_cache[cache_key] = execute_sql(g_sql, d_path)
+            gold_result = gold_cache[cache_key]
             reward = 1.0 if results_match(gen_result, gold_result) else 0.0
         except Exception:
             reward = 0.0
