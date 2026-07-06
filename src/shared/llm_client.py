@@ -1,8 +1,9 @@
 """
-Flexible LLM client supporting multiple providers (xAI, OpenRouter).
+Flexible LLM client supporting multiple providers (xAI, OpenRouter, W&B Inference).
 
 All providers use the OpenAI-compatible API format, so we just
-swap the base_url and api_key.
+swap the base_url and api_key. W&B Inference additionally takes an optional
+``OpenAI-Project`` header (set WANDB_PROJECT="team/project") for usage attribution.
 """
 
 from __future__ import annotations
@@ -26,6 +27,24 @@ PROVIDERS = {
         "api_key_env": "OPENROUTER_API_KEY",
         "default_model": "deepseek/deepseek-v3.2",
     },
+    "wandb": {
+        "base_url": "https://api.inference.wandb.ai/v1",
+        "api_key_env": "WANDB_API_KEY",
+        "project_env": "WANDB_PROJECT",   # optional team/project for usage attribution
+        "default_model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    },
+}
+
+# W&B Inference model IDs (full HF-style names) and short aliases.
+# Verify exact IDs against the W&B Inference catalog if a model 404s.
+WANDB_MODELS = {
+    "qwen3-coder-480b": "Qwen/Qwen3-Coder-480B-A35B-Instruct",   # best Spider teacher (81.2% @N=250)
+    "deepseek-v4-pro":  "deepseek-ai/DeepSeek-V4-Pro",           # flagship, untested on Spider
+    "deepseek-v3.1":    "deepseek-ai/DeepSeek-V3.1",             # known-good fallback (73.2%)
+    "glm-5.2":          "zai-org/GLM-5.2",                       # predecessor GLM-5.1 = 72.0%
+    "glm-5.1":          "zai-org/GLM-5.1",
+    "kimi-k2.6":        "moonshotai/Kimi-K2.6",
+    "nemotron-ultra":   "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B",
 }
 
 # Popular models on OpenRouter (for reference / listing)
@@ -73,6 +92,9 @@ def list_available_models():
 
 def resolve_model(model_name: str, provider: str) -> str:
     """Resolve a shortcut name to a full model ID."""
+    if provider == "wandb":
+        return WANDB_MODELS.get(model_name, model_name)
+
     if provider == "xai":
         return model_name
 
@@ -97,7 +119,16 @@ def get_client(provider: str) -> OpenAI:
             f"Missing API key. Set {config['api_key_env']} in your .env file."
         )
 
-    return OpenAI(api_key=api_key, base_url=config["base_url"])
+    kwargs: dict = {"api_key": api_key, "base_url": config["base_url"]}
+
+    # W&B Inference attributes usage to a team/project via an OpenAI-Project header.
+    project_env = config.get("project_env")
+    if project_env:
+        project = os.getenv(project_env)
+        if project:
+            kwargs["default_headers"] = {"OpenAI-Project": project}
+
+    return OpenAI(**kwargs)
 
 
 def extract_sql(response_text: str) -> str:
