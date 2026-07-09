@@ -223,6 +223,7 @@ def train(
     output_dir: Path,
     num_epochs: int = 1,
     num_generations: int = 8,
+    limit: int | None = None,
     learning_rate: float = 1e-6,
     lr_scheduler: str = "cosine",
     beta: float = 0.05,
@@ -240,6 +241,9 @@ def train(
     # ── Build dataset ─────────────────────────────────────────────────────────
     print("\nBuilding GRPO dataset...")
     dataset = build_grpo_dataset(train_json, db_dir, tokenizer=tokenizer)
+    if limit and limit < len(dataset):
+        dataset = dataset.select(range(limit))
+        print(f"Limited to {len(dataset)} examples (--limit {limit}) to fit the SLURM window")
     print(f"Dataset ready: {len(dataset)} examples")
 
     # ── GRPO config ───────────────────────────────────────────────────────────
@@ -328,6 +332,8 @@ if __name__ == "__main__":
     parser.add_argument("--epochs",       type=int,   default=1)
     parser.add_argument("--num-gen",      type=int,   default=8,
                         help="Number of SQL candidates per question (GRPO group size)")
+    parser.add_argument("--limit",        type=int,   default=None,
+                        help="Cap the number of train questions (to fit the SLURM window)")
     parser.add_argument("--lr",           type=float, default=1e-6)
     parser.add_argument("--lr-scheduler", type=str,   default="cosine",
                         choices=["cosine", "constant", "linear"],
@@ -351,6 +357,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         num_epochs=args.epochs,
         num_generations=args.num_gen,
+        limit=args.limit,
         learning_rate=args.lr,
         lr_scheduler=args.lr_scheduler,
         beta=args.beta,
