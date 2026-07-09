@@ -32,3 +32,5 @@ data/*
 results/*
 CLAUDE.md
 BIRD_RESULTS.md
+scripts/*
+AGENTS.md

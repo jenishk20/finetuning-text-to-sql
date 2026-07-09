@@ -224,6 +224,8 @@ def train(
     num_epochs: int = 1,
     num_generations: int = 8,
     learning_rate: float = 1e-6,
+    lr_scheduler: str = "cosine",
+    beta: float = 0.05,
     max_new_tokens: int = 512,
     per_device_batch_size: int = 1,
     grad_accum_steps: int = 8,
@@ -255,11 +257,11 @@ def train(
         per_device_train_batch_size=per_device_batch_size,
         gradient_accumulation_steps=grad_accum_steps,
         learning_rate=learning_rate,
-        lr_scheduler_type="cosine",
+        lr_scheduler_type=lr_scheduler,   # "constant" recommended — cosine over few steps decays to ~0 and freezes the model
         warmup_ratio=0.05,
 
-        # KL penalty — keeps model close to SFT base
-        beta=0.05,
+        # KL penalty — lower (0.01-0.03) gives more room to move; verifiable-reward RL likes low KL
+        beta=beta,
 
         # Memory
         bf16=True,
@@ -327,6 +329,11 @@ if __name__ == "__main__":
     parser.add_argument("--num-gen",      type=int,   default=8,
                         help="Number of SQL candidates per question (GRPO group size)")
     parser.add_argument("--lr",           type=float, default=1e-6)
+    parser.add_argument("--lr-scheduler", type=str,   default="cosine",
+                        choices=["cosine", "constant", "linear"],
+                        help="'constant' recommended — cosine over few steps decays to ~0 and freezes the model")
+    parser.add_argument("--beta",         type=float, default=0.05,
+                        help="KL penalty; lower (0.01-0.03) gives more room to move on verifiable rewards")
     parser.add_argument("--max-tokens",   type=int,   default=512)
     parser.add_argument("--batch-size",   type=int,   default=1)
     parser.add_argument("--grad-accum",   type=int,   default=8)
@@ -345,6 +352,8 @@ if __name__ == "__main__":
         num_epochs=args.epochs,
         num_generations=args.num_gen,
         learning_rate=args.lr,
+        lr_scheduler=args.lr_scheduler,
+        beta=args.beta,
         max_new_tokens=args.max_tokens,
         per_device_batch_size=args.batch_size,
         grad_accum_steps=args.grad_accum,
