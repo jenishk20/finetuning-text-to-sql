@@ -109,6 +109,7 @@ def build_pairs(
     candidates_file: Path | None = None,
     generate_only: bool = False,
     cot: bool = False,
+    rft: bool = False,
     max_new_tokens: int = 512,
 ):
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -180,8 +181,9 @@ def build_pairs(
                 return
 
     # ── Execute, classify, build pairs ────────────────────────────────────────
-    print(f"\n[4/4] Executing candidates and building pairs ...")
+    print(f"\n[4/4] Executing candidates and building {'RFT SFT data' if rft else 'pairs'} ...")
     pairs        = []
+    sft_examples = []   # RFT/STaR: {instruction, input:"", output: shortest correct sample}
     skipped      = {"no_correct": 0, "all_correct": 0, "all_wrong": 0}
     per_question_stats = []
 
@@ -209,13 +211,25 @@ def build_pairs(
             "num_wrong":   len(wrong),
         })
 
-        if not correct:
+        instruction = (build_cot_instruction(q["question"], q["schema"], q["evidence"])
+                       if cot else build_instruction(q["question"], q["schema"], q["evidence"]))
+
+        if rft:
+            # STaR/RFT: keep the SHORTEST execution-correct sample as an SFT target.
+            # Shortest counters the verbosity/non-termination that sank CoT-DPO.
+            if correct:
+                sft_examples.append({
+                    "instruction": instruction,
+                    "input":       "",
+                    "output":      min(correct, key=len),
+                })
+            else:
+                skipped["all_wrong"] += 1
+        elif not correct:
             skipped["all_wrong"] += 1
         elif not wrong:
             skipped["all_correct"] += 1
         else:
-            instruction = (build_cot_instruction(q["question"], q["schema"], q["evidence"])
-                           if cot else build_instruction(q["question"], q["schema"], q["evidence"]))
             pairs.append({
                 "instruction":     instruction,
                 "input":           "",
@@ -234,18 +248,50 @@ def build_pairs(
             elapsed_min = (time.time() - exec_start) / 60
             rate        = (i + 1) / max(elapsed_min, 0.01)
             eta_min     = (len(questions) - (i + 1)) / max(rate, 0.1)
-            print(f"  [{i+1}/{len(questions)}] pairs={len(pairs)} "
+            n_out = len(sft_examples) if rft else len(pairs)
+            print(f"  [{i+1}/{len(questions)}] {'sft' if rft else 'pairs'}={n_out} "
                   f"skip_wrong={skipped['all_wrong']} skip_correct={skipped['all_correct']} "
                   f"| elapsed={elapsed_min:.1f}min ETA={eta_min:.1f}min")
-            # Intermediate save so a SLURM timeout doesn't destroy all pairs
+            # Intermediate save so a SLURM timeout doesn't destroy progress
             with open(output_file, "w") as f:
-                json.dump(
-                    [{"instruction": p["instruction"], "input": "", "chosen": p["chosen"], "rejected": p["rejected"]}
-                     for p in pairs],
-                    f, indent=2,
-                )
+                if rft:
+                    json.dump(sft_examples, f, indent=2)
+                else:
+                    json.dump(
+                        [{"instruction": p["instruction"], "input": "", "chosen": p["chosen"], "rejected": p["rejected"]}
+                         for p in pairs],
+                        f, indent=2,
+                    )
 
     # ── Save ──────────────────────────────────────────────────────────────────
+    if rft:
+        with open(output_file, "w") as f:
+            json.dump(sft_examples, f, indent=2)
+        meta_file = output_file.parent / (output_file.stem + "_metadata.json")
+        with open(meta_file, "w") as f:
+            json.dump({
+                "mode":        "rft_star",
+                "base_model":  base_model,
+                "adapter":     str(adapter) if adapter else None,
+                "k":           k,
+                "temperature": temperature,
+                "num_questions_attempted": len(questions),
+                "num_sft_examples":        len(sft_examples),
+                "skipped_all_wrong":       skipped["all_wrong"],
+                "per_question_stats":      per_question_stats,
+            }, f, indent=2)
+        print(f"\n{'=' * 70}")
+        print(f"  STaR / RFT SFT DATA DONE")
+        print(f"{'=' * 70}")
+        print(f"  Questions attempted:        {len(questions)}")
+        print(f"  SFT examples (>=1 correct): {len(sft_examples)}")
+        print(f"  Coverage:                   {len(sft_examples) / max(1, len(questions)) * 100:.1f}%")
+        print(f"  Skipped (all wrong):        {skipped['all_wrong']}")
+        print(f"\n  Saved SFT data: {output_file}")
+        print(f"  Saved metadata: {meta_file}")
+        print(f"{'=' * 70}")
+        return
+
     # Keep only the DPO-relevant keys in the trainer-compatible file
     dpo_examples = [
         {"instruction": p["instruction"], "input": "", "chosen": p["chosen"], "rejected": p["rejected"]}
@@ -315,6 +361,9 @@ def main():
                              "generate and build-pairs jobs.")
     parser.add_argument("--max-new-tokens", type=int, default=512,
                         help="Max generated tokens per sample (use ~1024 for CoT)")
+    parser.add_argument("--rft", action="store_true",
+                        help="STaR/RFT mode: emit SFT data {instruction, output=shortest correct sample} "
+                             "instead of DPO pairs. Use on the build (CPU) phase with --candidates-file [--cot].")
     args = parser.parse_args()
 
     # Validate inputs per phase. The CPU phase (--candidates-file) needs neither
@@ -340,6 +389,7 @@ def main():
         candidates_file=args.candidates_file,
         generate_only=args.generate_only,
         cot=args.cot,
+        rft=args.rft,
         max_new_tokens=args.max_new_tokens,
     )
 
