@@ -28,9 +28,23 @@ export PIP_CACHE_DIR=/scratch/phalle.y/pip_cache
 
 pip install -q "trl==0.12.2" "transformers==4.46.3" 2>&1 | tail -3
 
+# ── Merge teacher CoT seed + self-generated correct CoTs (the STaR round) ────
+# Training on the STaR data ALONE (~1,664) would underperform the 52.1% CoT-SFT
+# (which used the full 5,593 seed). The proper STaR round SFTs on the UNION.
+SEED=/scratch/phalle.y/cot_sft_data.json
+STAR=/scratch/phalle.y/results_star_7b/bird_star_self_data.json   # the RFT output (note: *_self_data.json)
+MERGED=/scratch/phalle.y/bird_star_merged_sft.json
+python3 -c "
+import json
+seed=json.load(open('$SEED')); star=json.load(open('$STAR'))
+m=seed+star
+json.dump(m, open('$MERGED','w'), indent=2)
+print(f'merged: seed {len(seed)} + star {len(star)} = {len(m)} examples')
+"
+
 # sft_train.py defaults to 14B — pass the 7B explicitly.
 PYTHONUNBUFFERED=1 python -m src.bird.sft_train \
-    --sft-data    /scratch/phalle.y/results_star_7b/bird_star_sft_data.json \
+    --sft-data    "$MERGED" \
     --output-dir  /scratch/phalle.y/bird_star_sft_adapter_7b \
     --base-model  Qwen/Qwen2.5-Coder-7B-Instruct \
     --epochs      2 \
