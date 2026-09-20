@@ -78,6 +78,15 @@ def main():
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    # Newer transformers saves the chat template as a standalone chat_template.jinja;
+    # transformers 4.46 doesn't auto-load that file, so set it explicitly.
+    if not getattr(tok, "chat_template", None):
+        ct_path = Path(args.model) / "chat_template.jinja"
+        if ct_path.exists():
+            tok.chat_template = ct_path.read_text()
+            print("Loaded chat template from chat_template.jinja")
+        else:
+            raise SystemExit("No chat template: neither tokenizer.chat_template nor chat_template.jinja found.")
     tok.padding_side = "left"  # required for correct batched decoder-only generation
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
