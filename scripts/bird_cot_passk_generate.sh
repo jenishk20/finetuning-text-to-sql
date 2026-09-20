@@ -12,10 +12,11 @@
 # download and no proxy dependency at run time.
 #
 # ---------------------------------------------------------------------------
-# ONE-TIME SETUP (do this once; it needs the proxy for pip):
-#   source /scratch/phalle.y/mergeenv310/bin/activate
+# ONE-TIME SETUP (do this once; needs the proxy for pip):
+#   python3 -m venv /scratch/phalle.y/passk_env
+#   source /scratch/phalle.y/passk_env/bin/activate
 #   export HTTPS_PROXY=http://10.99.0.130:3128 HTTP_PROXY=http://10.99.0.130:3128
-#   pip install "transformers==4.46.3"
+#   pip install --upgrade pip && pip install torch==2.4.1 transformers==4.46.3
 # ---------------------------------------------------------------------------
 #
 # RUN (on a GPU node):
@@ -35,9 +36,8 @@
 #SBATCH --output=/scratch/phalle.y/bird_cot_passk_gen_%j.out
 #SBATCH --error=/scratch/phalle.y/bird_cot_passk_gen_%j.err
 
-# Activate the venv BEFORE strict mode (its activate script is fine, but keep the
-# same ordering discipline: activate, then turn on error-exit).
-source /scratch/phalle.y/mergeenv310/bin/activate
+# Activate the venv BEFORE strict mode (activate, then turn on error-exit).
+source /scratch/phalle.y/passk_env/bin/activate
 set -eo pipefail
 cd /scratch/phalle.y/finetuning-text-to-sql
 
@@ -57,7 +57,7 @@ mkdir -p "$OUTDIR"
 
 # ── Preconditions ─────────────────────────────────────────────────────────────
 python -c "import transformers" 2>/dev/null || {
-    echo "ERROR: transformers not installed in mergeenv310."
+    echo "ERROR: transformers not importable in passk_env."
     echo "Run the ONE-TIME SETUP block in this script's header, then re-run."
     exit 1
 }

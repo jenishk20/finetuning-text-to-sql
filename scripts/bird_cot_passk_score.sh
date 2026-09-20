@@ -18,9 +18,8 @@
 #   uses for CPU jobs (this script intentionally requests no GPU).
 # ----------------------------------------------------------------------------
 
-# score_pass_k has NO heavy deps (just sqlite + stdlib), so any surviving env
-# works. mergeenv310 is a venv, so activate it the venv way, then strict mode.
-source /scratch/phalle.y/mergeenv310/bin/activate
+# score_pass_k has NO heavy deps (just sqlite + stdlib), so the same venv works.
+source /scratch/phalle.y/passk_env/bin/activate
 set -eo pipefail
 cd /scratch/phalle.y/finetuning-text-to-sql
 
