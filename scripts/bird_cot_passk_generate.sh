@@ -40,9 +40,12 @@
 #SBATCH --output=/scratch/phalle.y/bird_cot_passk_gen_%j.out
 #SBATCH --error=/scratch/phalle.y/bird_cot_passk_gen_%j.err
 
-set -euo pipefail
-
+# Activate conda BEFORE any strict-mode flag. Conda's activate script
+# references $PS1 (unset in a batch shell), so running it under `set -u`
+# aborts the job with "PS1: unbound variable". Activate first, then turn on
+# strict mode for the actual work.
 source activate /scratch/phalle.y/py310env
+set -eo pipefail
 cd /scratch/phalle.y/finetuning-text-to-sql
 
 export HF_HOME=/scratch/phalle.y/hf_cache

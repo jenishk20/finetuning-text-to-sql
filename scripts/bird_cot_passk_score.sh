@@ -18,9 +18,10 @@
 #   uses for CPU jobs (this script intentionally requests no GPU).
 # ----------------------------------------------------------------------------
 
-set -euo pipefail
-
+# Activate conda BEFORE any strict-mode flag (conda's activate script
+# references $PS1, which is unset in a batch shell and aborts under `set -u`).
 source activate /scratch/phalle.y/py310env
+set -eo pipefail
 cd /scratch/phalle.y/finetuning-text-to-sql
 
 OUTDIR=/scratch/phalle.y/results_cot_passk
