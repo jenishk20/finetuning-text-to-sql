@@ -65,7 +65,12 @@ def main():
     ap.add_argument("--limit",          type=int,   default=0, help="0 = all dev questions")
     ap.add_argument("--batch-size",     type=int,   default=4,
                     help="prompts per forward pass (each expands to k sequences). Lower if OOM.")
+    ap.add_argument("--greedy",         action="store_true",
+                    help="greedy decode (do_sample=False), forces k=1. Use to reproduce the "
+                         "52.1%% greedy baseline and validate the pipeline before trusting pass@k.")
     args = ap.parse_args()
+
+    K = 1 if args.greedy else args.k  # candidates per question
 
     if not torch.cuda.is_available():
         raise SystemExit("No CUDA device visible — run this on a GPU node.")
@@ -122,32 +127,33 @@ def main():
             "difficulty":  q.get("difficulty", "unknown"),
             "prompt":      prompt,
         })
-    print(f"Prepared {len(recs)} questions ({skipped} skipped for missing db). "
-          f"Generating k={args.k} at temp={args.temperature} ...")
+    mode = "GREEDY (k=1)" if args.greedy else f"sampling k={args.k} temp={args.temperature}"
+    print(f"Prepared {len(recs)} questions ({skipped} skipped for missing db). Mode: {mode} ...")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     out_records = []
     start = time.time()
     for b in range(0, len(recs), args.batch_size):
         batch = recs[b: b + args.batch_size]
-        enc = tok([r["prompt"] for r in batch], return_tensors="pt",
-                  padding=True, add_special_tokens=False).to("cuda")
+        # Match eval_finetuned exactly: default add_special_tokens (True).
+        enc = tok([r["prompt"] for r in batch], return_tensors="pt", padding=True).to("cuda")
+        gen_kwargs = dict(
+            max_new_tokens=args.max_new_tokens,
+            num_return_sequences=K,
+            pad_token_id=tok.pad_token_id,
+        )
+        if args.greedy:
+            gen_kwargs["do_sample"] = False
+        else:
+            gen_kwargs.update(do_sample=True, temperature=args.temperature, top_p=args.top_p)
         with torch.inference_mode():
-            gen = model.generate(
-                **enc,
-                do_sample=True,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                max_new_tokens=args.max_new_tokens,
-                num_return_sequences=args.k,
-                pad_token_id=tok.pad_token_id,
-            )
-        # generate returns (len(batch)*k, seq); strip the prompt, decode, regroup.
+            gen = model.generate(**enc, **gen_kwargs)
+        # generate returns (len(batch)*K, seq); strip the prompt, decode, regroup.
         gen = gen[:, enc["input_ids"].shape[1]:]
         texts = tok.batch_decode(gen, skip_special_tokens=True)
         for j, r in enumerate(batch):
-            rec = {k: v for k, v in r.items() if k != "prompt"}
-            rec["candidates"] = texts[j * args.k:(j + 1) * args.k]
+            rec = {kk: vv for kk, vv in r.items() if kk != "prompt"}
+            rec["candidates"] = texts[j * K:(j + 1) * K]
             out_records.append(rec)
 
         done = min(b + args.batch_size, len(recs))

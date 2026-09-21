@@ -49,9 +49,14 @@ MODEL=/scratch/phalle.y/bird_cot_sft_merged_7b                              # LO
 DEVJSON=/scratch/phalle.y/bird_dev/dev_20240627/dev.json
 DEVDB=/scratch/phalle.y/bird_dev/dev_20240627/dev_databases
 OUTDIR=/scratch/phalle.y/results_cot_passk
-CANDFILE=$OUTDIR/dev_cot_candidates_k8.json
+CANDFILE=${OUT:-$OUTDIR/dev_cot_candidates_k8.json}                         # override with OUT=...
 LIMIT=${LIMIT:-0}
 BATCH=${BATCH:-4}                                                           # lower to 2 or 1 if OOM
+# GREEDY=1 -> greedy reproduce check (do_sample off, 1 sample/q). Use a distinct
+# OUT so it doesn't collide with the sampled candidates, e.g.:
+#   GREEDY=1 LIMIT=300 BATCH=1 OUT=$OUTDIR/dev_greedy_check.json sbatch scripts/bird_cot_passk_generate.sh
+GREEDY_FLAG=""
+[ -n "${GREEDY:-}" ] && GREEDY_FLAG="--greedy"
 
 mkdir -p "$OUTDIR"
 
@@ -84,7 +89,7 @@ PYTHONUNBUFFERED=1 python -m src.bird.generate_cot_candidates_hf \
     --temperature    0.8 \
     --max-new-tokens 768 \
     --batch-size     "$BATCH" \
-    $EXTRA
+    $GREEDY_FLAG $EXTRA
 
 echo "Done. Candidates at $CANDFILE"
 echo "Next: bash scripts/bird_cot_passk_score.sh"
