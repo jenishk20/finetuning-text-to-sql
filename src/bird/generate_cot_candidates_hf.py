@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 # These imports pull only `re`/`typing` at module load (the vLLM engine is
 # imported lazily inside its own class), so this works in a vLLM-free env.
@@ -50,6 +50,27 @@ def get_schema(db_path: str) -> str:
 def resolve_db(db_dir: Path, db_id: str) -> str | None:
     p = Path(db_dir) / db_id / f"{db_id}.sqlite"
     return str(p) if p.exists() else None
+
+
+def load_config_compat(model_dir: str):
+    """Load the model config, translating transformers-5 fields that 4.4x ignores.
+
+    The merged model was saved with transformers 5.x, which nests rope_theta under
+    `rope_parameters`. transformers 4.46 doesn't read that key and silently falls
+    back to Qwen2's default rope_theta=10000 instead of the model's 1,000,000.
+    The model still writes fluent text but loses track of the long schema in the
+    prompt, so accuracy collapses with no error raised.
+    """
+    config = AutoConfig.from_pretrained(model_dir, trust_remote_code=True)
+    cfg_path = Path(model_dir) / "config.json"
+    raw = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    rope = raw.get("rope_parameters") or {}
+    if "rope_theta" not in raw and "rope_theta" in rope:
+        config.rope_theta = rope["rope_theta"]
+        if rope.get("rope_type", "default") != "default":
+            config.rope_scaling = {k: v for k, v in rope.items() if k != "rope_theta"}
+    expected = raw.get("rope_theta", rope.get("rope_theta"))
+    return config, expected
 
 
 def main():
@@ -94,13 +115,31 @@ def main():
         else:
             raise SystemExit("No chat template: neither tokenizer.chat_template nor chat_template.jinja found.")
     tok.padding_side = "left"  # required for correct batched decoder-only generation
-    model = AutoModelForCausalLM.from_pretrained(
+
+    config, expected_theta = load_config_compat(args.model)
+    model, info = AutoModelForCausalLM.from_pretrained(
         args.model,
+        config=config,
         torch_dtype=torch.bfloat16,
         attn_implementation="sdpa",
         trust_remote_code=True,
-    ).to("cuda")
+        output_loading_info=True,
+    )
+    model = model.to("cuda")
     model.eval()
+
+    # ── Load checks: fail loudly instead of producing silently-wrong numbers ──
+    theta = getattr(model.config, "rope_theta", None)
+    if expected_theta is not None and float(theta) != float(expected_theta):
+        raise SystemExit(f"rope_theta mismatch: loaded {theta}, config.json says {expected_theta}")
+    if info.get("missing_keys"):
+        raise SystemExit(f"Weights missing from checkpoint (would be random): {info['missing_keys'][:5]}")
+    im_start_id = tok.convert_tokens_to_ids("<|im_start|>")
+    im_start_enc = tok("<|im_start|>", add_special_tokens=False)["input_ids"]
+    if im_start_enc != [im_start_id]:
+        raise SystemExit(f"Tokenizer splits <|im_start|> into {im_start_enc}; chat format would be broken")
+    print(f"LOAD CHECK OK: rope_theta={theta} | missing_keys=0 | "
+          f"unexpected_keys={len(info.get('unexpected_keys', []))} | <|im_start|> -> {im_start_enc}")
 
     # ── Build prompts + carry-through metadata ────────────────────────────────
     schema_cache: dict[str, str] = {}
