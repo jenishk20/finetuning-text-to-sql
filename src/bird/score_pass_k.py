@@ -173,9 +173,19 @@ def main():
         s["self_consistency"] = round(s["sc"] / s["total"], 4)
         s[f"pass@{max(ks)}"] = round(s["passk_sum"] / s["total"], 4)
 
+    # Group outcomes. GRPO's advantage is (reward - group mean), so only questions
+    # whose samples DISAGREE (some right, some wrong) produce any gradient.
+    all_right = sum(1 for q in per_q if q["c"] == q["n"])
+    all_wrong = sum(1 for q in per_q if q["c"] == 0)
+    groups = {
+        "mixed":       round((total - all_right - all_wrong) / total, 4),
+        "all_correct": round(all_right / total, 4),
+        "all_wrong":   round(all_wrong / total, 4),
+    }
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = args.output_dir / f"bird_passk_{ts}.json"
+    out = args.output_dir / f"bird_passk_{args.candidates_file.stem}_{ts}.json"
     payload = {
         "candidates_file": str(args.candidates_file),
         "total_questions": total,
@@ -188,6 +198,9 @@ def main():
             "note": "This gap is the ceiling a better selector or CoT-GRPO could recover.",
         },
         "per_difficulty": per_diff,
+        "group_outcomes": groups,
+        # One row per question so runs can be compared question by question.
+        "per_question": per_q,
     }
     json.dump(payload, open(out, "w"), indent=2, default=str)
 
@@ -197,10 +210,14 @@ def main():
     print("=" * 64)
     for k in ks:
         print(f"    pass@{k:<2}            : {passk[k]:.1%}")
-    print(f"    self-consistency@{kmax}: {self_consistency:.1%}   (should reproduce your ~58.5%)")
-    print("-" * 64)
-    print(f"    HEADROOM  pass@{kmax} - self-consistency = {oracle - self_consistency:+.1%}")
-    print(f"    (greedy is measured separately at 52.1%; pass@1 above is a temp>0 sample)")
+    if n_avail == 1:
+        print("    (one sample per question: pass@1 is plain accuracy)")
+    else:
+        print(f"    self-consistency@{kmax}: {self_consistency:.1%}   (full dev should reproduce ~58.5%)")
+        print("-" * 64)
+        print(f"    HEADROOM  pass@{kmax} - self-consistency = {oracle - self_consistency:+.1%}")
+        print(f"    GROUPS (GRPO signal): mixed {groups['mixed']:.1%} | "
+              f"all-correct {groups['all_correct']:.1%} | all-wrong {groups['all_wrong']:.1%}")
     print("-" * 64)
     print("    per difficulty (self-consistency  ->  pass@%d):" % kmax)
     for d, s in sorted(per_diff.items()):
