@@ -24,7 +24,8 @@ set -eo pipefail
 cd /scratch/phalle.y/finetuning-text-to-sql
 
 OUTDIR=/scratch/phalle.y/results_cot_passk
-CANDFILE=$OUTDIR/dev_cot_candidates_k8.json
+CANDFILE=${CANDFILE:-$OUTDIR/dev_cot_candidates_k8.json}   # override: CANDFILE=... bash scripts/bird_cot_passk_score.sh
+KS=${KS:-"1 2 4 8"}                                         # use KS=1 to score the greedy check
 
 if [ ! -f "$CANDFILE" ]; then
     echo "ERROR: $CANDFILE not found. Run job 1 first: scripts/bird_cot_passk_generate.sh"
@@ -35,4 +36,4 @@ fi
 PYTHONUNBUFFERED=1 python -m src.bird.score_pass_k \
     --candidates-file "$CANDFILE" \
     --output-dir      "$OUTDIR" \
-    --ks 1 2 4 8
+    --ks $KS

@@ -60,7 +60,8 @@ def main():
     ap.add_argument("--out",            type=Path, required=True)
     ap.add_argument("--k",              type=int,   default=8, help="samples per question")
     ap.add_argument("--temperature",    type=float, default=0.8)
-    ap.add_argument("--top-p",          type=float, default=0.95)
+    ap.add_argument("--top-p",          type=float, default=1.0,
+                    help="1.0 matches the vLLM run that produced the 58.5%% Best-of-N number")
     ap.add_argument("--max-new-tokens", type=int,   default=768)
     ap.add_argument("--limit",          type=int,   default=0, help="0 = all dev questions")
     ap.add_argument("--batch-size",     type=int,   default=4,
@@ -127,7 +128,9 @@ def main():
             "difficulty":  q.get("difficulty", "unknown"),
             "prompt":      prompt,
         })
-    mode = "GREEDY (k=1)" if args.greedy else f"sampling k={args.k} temp={args.temperature}"
+    mode = ("GREEDY (k=1, model generation_config defaults)" if args.greedy else
+            f"sampling k={args.k} temp={args.temperature} top_p={args.top_p} "
+            f"top_k=off repetition_penalty=1.0")
     print(f"Prepared {len(recs)} questions ({skipped} skipped for missing db). Mode: {mode} ...")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -142,10 +145,25 @@ def main():
             num_return_sequences=K,
             pad_token_id=tok.pad_token_id,
         )
+        # generate() silently merges in the model's generation_config.json, which
+        # for this model sets repetition_penalty=1.1, top_k=20, top_p=0.8. Anything
+        # not overridden here leaks into decoding.
         if args.greedy:
+            # Keep the inherited defaults on purpose: the 52.1% greedy eval
+            # (eval_finetuned, also HF) ran with them, so this stays comparable.
             gen_kwargs["do_sample"] = False
         else:
-            gen_kwargs.update(do_sample=True, temperature=args.temperature, top_p=args.top_p)
+            # Mirror the vLLM sampling that produced the 58.5% Best-of-N number:
+            # explicit SamplingParams there meant no repetition penalty and no
+            # top-k. The penalty also hits schema tokens copied from the prompt,
+            # which is exactly what text-to-SQL needs to reproduce verbatim.
+            gen_kwargs.update(
+                do_sample=True,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                top_k=0,                 # disable the inherited top_k=20
+                repetition_penalty=1.0,  # disable the inherited 1.1
+            )
         with torch.inference_mode():
             gen = model.generate(**enc, **gen_kwargs)
         # generate returns (len(batch)*K, seq); strip the prompt, decode, regroup.
