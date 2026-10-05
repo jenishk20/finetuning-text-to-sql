@@ -5,9 +5,10 @@ SQL executor for running queries against Spider's SQLite databases.
 import sqlite3
 import threading
 import time
+from pathlib import Path
 
 
-def execute_sqlite_query(sql: str, db_path: str, timeout: int = 30) -> dict:
+def execute_sqlite_query(sql: str, db_path: str, timeout: int = 30, read_only: bool = False) -> dict:
     """
     Execute a SQL query against a SQLite database file.
 
@@ -18,10 +19,16 @@ def execute_sqlite_query(sql: str, db_path: str, timeout: int = 30) -> dict:
       - "row_count": number of rows
       - "execution_time_ms": time taken
       - "error": error message (if failure)
+
+    read_only=True opens the file with SQLite's mode=ro, so a generated
+    DELETE/UPDATE/DROP fails instead of permanently modifying the database.
     """
     conn = None
     try:
-        conn = sqlite3.connect(db_path)
+        if read_only:
+            conn = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
+        else:
+            conn = sqlite3.connect(db_path)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.text_factory = str
         cursor = conn.cursor()

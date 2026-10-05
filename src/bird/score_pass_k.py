@@ -43,9 +43,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import time
 from collections import Counter
 from datetime import datetime
 from math import comb
+from multiprocessing import Pool
 from pathlib import Path
 
 from src.shared.sqlite_executor import execute_sqlite_query
@@ -106,6 +109,44 @@ def majority_correct(execs: list[dict], correct: list[bool]) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# per-question scoring (runs in worker processes)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def score_question(item) -> dict:
+    """
+    Score one question. The gold query runs once, and each DISTINCT candidate
+    query runs once: the k samples often repeat the same final SQL, so this cuts
+    most of the execution time without changing any result. Connections are
+    read-only so a generated DELETE/DROP can't damage the dev database.
+    """
+    i, qid, difficulty, gold_sql, db_path, candidates = item
+    gold_exec = execute_sqlite_query(gold_sql, db_path, timeout=EXEC_TIMEOUT, read_only=True)
+    sqls = [extract_final_sql(c) for c in candidates]
+    cache: dict[str, dict] = {}
+    for s in sqls:
+        if s not in cache:
+            cache[s] = execute_sqlite_query(s, db_path, timeout=EXEC_TIMEOUT, read_only=True)
+    execs = [cache[s] for s in sqls]
+    correct = [compare_results(e, gold_exec)["result_match"] for e in execs]
+    return {
+        "question_id":      qid,
+        "difficulty":       difficulty,
+        "n":                len(correct),
+        "c":                sum(correct),
+        "majority_correct": majority_correct(execs, correct),
+        "distinct_sql":     len(cache),
+    }
+
+
+def available_cpus() -> int:
+    """CPUs this process may use (respects a Slurm/cgroup allocation on Linux)."""
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -116,6 +157,8 @@ def main():
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--ks", type=int, nargs="+", default=list(DEFAULT_KS),
                     help="Which k values to report pass@k for (default: 1 2 4 8)")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="parallel scoring processes (0 = CPUs available to this job, capped at 16)")
     args = ap.parse_args()
 
     records = json.load(open(args.candidates_file))
@@ -125,32 +168,26 @@ def main():
     if not ks:
         raise SystemExit(f"No usable k values: requested {args.ks}, but only {n_avail} candidates/question")
 
-    # Per-question: run every candidate once, record correctness + exec result.
-    per_q = []          # list of dicts: {c, n, majority_correct, difficulty}
-    skipped = 0
+    items, skipped = [], 0
     for i, q in enumerate(records):
-        db_path = q.get("db_path")
-        if not db_path:
+        if not q.get("db_path"):
             skipped += 1
             continue
-        gold_exec = execute_sqlite_query(q["gold_sql"], db_path, timeout=EXEC_TIMEOUT)
+        items.append((i, q.get("question_id", i), q.get("difficulty", "unknown"),
+                      q["gold_sql"], q["db_path"], q["candidates"]))
 
-        execs, correct = [], []
-        for cand in q["candidates"]:
-            sql = extract_final_sql(cand)
-            ex = execute_sqlite_query(sql, db_path, timeout=EXEC_TIMEOUT)
-            execs.append(ex)
-            correct.append(compare_results(ex, gold_exec)["result_match"])
-
-        per_q.append({
-            "question_id": q.get("question_id", i),
-            "difficulty":  q.get("difficulty", "unknown"),
-            "n":           len(correct),
-            "c":           sum(correct),
-            "majority_correct": majority_correct(execs, correct),
-        })
-        if (i + 1) % 200 == 0:
-            print(f"  [{i+1}/{len(records)}] scored", flush=True)
+    workers = args.workers or min(16, available_cpus())
+    print(f"Scoring {len(items)} questions with {workers} worker process(es) ...", flush=True)
+    per_q = []          # one dict per question, same order as the input file
+    start = time.time()
+    with Pool(workers) as pool:
+        for done, row in enumerate(pool.imap(score_question, items, chunksize=1), 1):
+            per_q.append(row)
+            if done % 100 == 0 or done == len(items):
+                elapsed = time.time() - start
+                left = elapsed / done * (len(items) - done)
+                print(f"  [{done}/{len(items)}] scored  {elapsed/60:.1f} min elapsed, "
+                      f"~{left/60:.1f} min left", flush=True)
 
     total = len(per_q)
     if total == 0:

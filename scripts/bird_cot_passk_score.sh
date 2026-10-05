@@ -36,4 +36,4 @@ fi
 PYTHONUNBUFFERED=1 python -m src.bird.score_pass_k \
     --candidates-file "$CANDFILE" \
     --output-dir      "$OUTDIR" \
-    --ks $KS
+    --ks $KS ${WORKERS:+--workers $WORKERS}
